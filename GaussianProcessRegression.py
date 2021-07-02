@@ -40,6 +40,17 @@ class GP:
         sqdist = firstTerm + secondTerm + thirdTerm
         return tau*np.exp(-.5 * sqdist)
 
+    def kernel4(self, x, y, tau, sigma):
+        Mvect = np.array([1.0, 1.0])
+        Mmatrix = np.array([[1.0, 0], [0, 1.0]])
+        xByLengthScale = x * Mvect
+        yByLengthScale = y * Mvect
+        firstTerm = np.sum(xByLengthScale ** 2, 1).reshape(-1, 1)
+        secondTerm = np.sum(yByLengthScale ** 2, 1)
+        thirdTerm = -2.0 * np.dot(np.dot(x, Mmatrix), y.T) #sum squares row wise and create (3x1) vectors, add to third term
+        sqdist = firstTerm + secondTerm + thirdTerm
+        return tau*np.exp(-.5 * sqdist)
+
     """
     Multivariate input and output GP regression
     @param trainingX: this is the training input matrix (training points along rows, input dimensions along columns)
@@ -92,7 +103,7 @@ class GP:
 
     def conductRegression(self, nTraining, nTestingLinear, tau, sigma):
         trainingX = 20 * (np.random.rand(nTraining, 2)) - 10  # nTrainingx2 random points from -10 to 10
-        trainingY = np.sin(trainingX[:, 0] + trainingX[:, 1])
+        trainingY = np.sin(trainingX[:, 0]) + 3*np.sin(trainingX[:, 1])
         testingX = np.mgrid[-10:10:nTestingLinear, -10:10:nTestingLinear].reshape(2, -1).T
 
         # mean = np.mean(trainingY)
@@ -100,11 +111,11 @@ class GP:
         # trainingY = trainingY - mean
 
         X, Y = np.mgrid[-10:10:nTestingLinear, -10:10:nTestingLinear]
-        Z = np.sin(X + Y)
+        Z = np.sin(X) + 3*np.sin(Y)
 
-        K = self.kernel(trainingX, trainingX, tau, sigma) + 0.00005 * np.eye(len(trainingX))
-        Ks = self.kernel(trainingX, testingX, tau, sigma)
-        Kss = self.kernel(testingX, testingX, tau, sigma)
+        K = self.kernel4(trainingX, trainingX, tau, sigma) + 0.00005 * np.eye(len(trainingX))
+        Ks = self.kernel4(trainingX, testingX, tau, sigma)
+        Kss = self.kernel4(testingX, testingX, tau, sigma)
 
         # firstMult1 = np.matmul(Ks.T, np.linalg.inv(K))
         # muVector = np.squeeze(np.matmul(firstMult1, trainingY))
@@ -141,7 +152,7 @@ class GP:
         trainingX, trainingY, testingX, muVector, stdVector, X, Y, Z = self.conductRegression(nTraining, nTestingLinear, tau, sigma)
 
         ax1.plot(np.squeeze(testingX[:nTesting, 1].transpose()), np.squeeze(muVector[:nTesting].transpose()), c='r', linestyle='-') #mean points
-        ax1.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0] + testingX[:nTesting, 1]), 'k--', lw=1) #actual function
+        ax1.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0]) + 3*np.sin(testingX[:nTesting, 1]), 'k--', lw=1) #actual function
         ax1.fill_between(np.squeeze(testingX[:nTesting, 1].transpose()),
                               np.squeeze(muVector[:nTesting] - 2.0 * stdVector[:nTesting]),
                               np.squeeze(muVector[:nTesting] + 2.0 * stdVector[:nTesting]), color="#dddddd") #uncertainty
@@ -152,7 +163,7 @@ class GP:
 
         ax4.plot(np.squeeze(testingX[25::50, 0].transpose()), np.squeeze(muVector[25::50].transpose()), c='r',
                   linestyle='-')  # mean points
-        ax4.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0] + testingX[25::50, 1]), 'k--',
+        ax4.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0]) + 3*np.sin(testingX[25::50, 1]), 'k--',
                  lw=1)  # actual function
         ax4.fill_between(np.squeeze(testingX[25::50, 0].transpose()),
                          np.squeeze(muVector[25::50] - 2.0 * stdVector[25::50]),
@@ -168,7 +179,7 @@ class GP:
                                                                                        sigma)
         ax2.plot(np.squeeze(testingX[:nTesting, 1].transpose()), np.squeeze(muVector[:nTesting].transpose()), c='r',
                   linestyle='-')  # mean points
-        ax2.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0] + testingX[:nTesting, 1]), 'k--',
+        ax2.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0]) + 3*np.sin(testingX[:nTesting, 1]), 'k--',
                  lw=1)  # actual function
         ax2.fill_between(np.squeeze(testingX[:nTesting, 1].transpose()),
                                np.squeeze(muVector[:nTesting] - 2.0 * stdVector[:nTesting]),
@@ -180,7 +191,7 @@ class GP:
 
         ax5.plot(np.squeeze(testingX[25::50, 0].transpose()), np.squeeze(muVector[25::50].transpose()), c='r',
                   linestyle='-')  # mean points
-        ax5.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0] + testingX[25::50, 1]), 'k--',
+        ax5.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0]) + 3*np.sin(testingX[25::50, 1]), 'k--',
                  lw=1)  # actual function
         ax5.fill_between(np.squeeze(testingX[25::50, 0].transpose()),
                          np.squeeze(muVector[25::50] - 2.0 * stdVector[25::50]),
@@ -195,7 +206,7 @@ class GP:
                                                                                        sigma)
         ax3.plot(np.squeeze(testingX[:nTesting, 1].transpose()), np.squeeze(muVector[:nTesting].transpose()), c='r',
                   linestyle='-')  # mean points
-        ax3.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0] + testingX[:nTesting, 1]), 'k--',
+        ax3.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0]) + 3*np.sin(testingX[:nTesting, 1]), 'k--',
                  lw=1)  # actual function
         ax3.fill_between(np.squeeze(testingX[:nTesting, 1].transpose()),
                                np.squeeze(muVector[:nTesting] - 2.0 * stdVector[:nTesting]),
@@ -207,7 +218,7 @@ class GP:
 
         ax6.plot(np.squeeze(testingX[25::50, 0].transpose()), np.squeeze(muVector[25::50].transpose()), c='r',
                   linestyle='-')  # mean points
-        ax6.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0] + testingX[25::50, 1]), 'k--',
+        ax6.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0]) + 3*np.sin(testingX[25::50, 1]), 'k--',
                  lw=1)  # actual function
         ax6.fill_between(np.squeeze(testingX[25::50, 0].transpose()),
                          np.squeeze(muVector[25::50] - 2.0 * stdVector[25::50]),

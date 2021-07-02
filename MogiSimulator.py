@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from numpy import linalg as LA
 from GaussianProcessRegression import GP
+import copy
 
 class MogiSim:
 
@@ -34,7 +35,7 @@ class MogiSim:
         testingX = np.hstack((np.full((len(testingX), 1), self.sourceStrength), testingX))
         self.testingX = testingX
 
-        return self.mogi(testingX)
+        return self.mogi(testingX, self.sourceX, self.sourceY)
 
     def createSurrogate(self, params):
         strength = params[0]
@@ -42,7 +43,7 @@ class MogiSim:
         y = params[2]
         depth = params[3]
 
-        numPoints = 6j
+        numPoints = 5j
 
         gp = GP()
         trainingX = np.mgrid[strength-10.5:strength+10.5:numPoints, x-5.1:x+5.1:numPoints, y-5.1:y+5.1:numPoints, depth-3.1:depth+3.1:numPoints].reshape(4, -1).T
@@ -51,15 +52,23 @@ class MogiSim:
         muMatrix, stdVector = gp.globalGaussianProcessRegression(trainingX, trainingY, self.testingX, 1.0, 4)
         return muMatrix, stdVector
 
-    def mogi(self, coordinates, xCenter = sourceX, yCenter=sourceY):  # coordinates are strength, x, y, and magnitude of cavity depth
-        displacements = np.empty((len(coordinates), 3))  # initialize displacements array
-        rowCounter = 0  # keep track of which row to modify
+    def mogi(self, matrixPoints, xCenter, yCenter):  # coordinates are strength, x, y, and magnitude of cavity depth
+        displacements = np.empty((len(matrixPoints), 3))  # initialize displacements array
+        coordinates = copy.deepcopy(matrixPoints)
         coordinates[:, 1] = coordinates[:, 1] - xCenter
         coordinates[:, 2] = coordinates[:, 2] - yCenter
         Rvect = LA.norm(coordinates[:, 1:4], axis = 1).T
         magVect = coordinates[:, 0] * (1 - self.poisson) / self.shearModulus/(np.power(Rvect, 3))
         displacements = (coordinates[:, 1:4].T*magVect).T
         return displacements
+
+
+
+
+
+
+
+
 
     def simulateMogi(self):
 
