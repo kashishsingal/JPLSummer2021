@@ -29,7 +29,22 @@ class GP:
         sqdist = np.sum(x ** 2, 1).reshape(-1, 1) + np.sum(y ** 2, 1) - 2 * np.dot(x, y.T) #sum squares row wise and create (3x1) vectors, add to third term
         return tau*np.exp(-.5 * (1.0/(sigma*2)) * sqdist)
 
-    def kernel(self, x, y, tau, numParams):
+    def kernel(self, x, y, hyperparams):
+        tau = hyperparams[0]
+        thetas = np.array(hyperparams[1:5])
+        Mvect = thetas
+        Mmatrix = np.diag(thetas)
+        xByLengthScale = x * Mvect
+        yByLengthScale = y * Mvect
+        firstTerm = np.sum((x ** 2) * Mvect, 1).reshape(-1, 1)
+        secondTerm = np.sum((y ** 2) * Mvect, 1)
+        # firstTerm = np.sum(xByLengthScale ** 2, 1).reshape(-1, 1)
+        # secondTerm = np.sum(yByLengthScale ** 2, 1)
+        thirdTerm = -2.0 * np.dot(np.dot(x, Mmatrix), y.T)  # sum squares row wise and create (3x1) vectors, add to third term
+        sqdist = firstTerm + secondTerm + thirdTerm
+        return tau*np.exp(-.5 * sqdist)
+
+    def kernel5(self, x, y, tau, numParams):
         Mvect = np.ones(numParams)
         Mmatrix = np.eye(numParams)
         xByLengthScale = x * Mvect
@@ -45,8 +60,8 @@ class GP:
         Mmatrix = np.array([[1.0, 0], [0, 1.0]])
         xByLengthScale = x * Mvect
         yByLengthScale = y * Mvect
-        firstTerm = np.sum(xByLengthScale ** 2, 1).reshape(-1, 1)
-        secondTerm = np.sum(yByLengthScale ** 2, 1)
+        firstTerm = np.sum((x ** 2) * Mvect, 1).reshape(-1, 1)
+        secondTerm = np.sum((y ** 2) * Mvect, 1)
         thirdTerm = -2.0 * np.dot(np.dot(x, Mmatrix), y.T) #sum squares row wise and create (3x1) vectors, add to third term
         sqdist = firstTerm + secondTerm + thirdTerm
         return tau*np.exp(-.5 * sqdist)
@@ -61,10 +76,10 @@ class GP:
     
     @return: mean (vector/matrix) and standard deviation vector of each testing point's output
     """
-    def globalGaussianProcessRegression(self, trainingX, trainingY, testingX, tau, numParams):
-        K = self.kernel(trainingX, trainingX, tau, numParams) + 0.00005 * np.eye(len(trainingX))
-        Ks = self.kernel(trainingX, testingX, tau, numParams)
-        Kss = self.kernel(testingX, testingX, tau, numParams)
+    def globalGaussianProcessRegression(self, trainingX, trainingY, testingX, hyperparams):
+        K = self.kernel(trainingX, trainingX, hyperparams) + 0.00005 * np.eye(len(trainingX))
+        Ks = self.kernel(trainingX, testingX, hyperparams)
+        Kss = self.kernel(testingX, testingX, hyperparams)
 
         # firstMult1 = np.matmul(Ks.T, np.linalg.inv(K))
         # muVector = np.squeeze(np.matmul(firstMult1, trainingY))

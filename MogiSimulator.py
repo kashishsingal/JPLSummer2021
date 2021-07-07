@@ -21,6 +21,8 @@ class MogiSim:
     sourceDepth = 2
     sourceStrength = 64
     testingX = None
+    trainingX = None
+    trainingY = None
 
     # the two variables below are now combined into a strength parameter
     # radius = 0.4
@@ -43,14 +45,12 @@ class MogiSim:
         y = params[2]
         depth = params[3]
 
-        numPoints = 5j
+        numPoints = 4j
 
-        gp = GP()
         trainingX = np.mgrid[strength-10.5:strength+10.5:numPoints, x-5.1:x+5.1:numPoints, y-5.1:y+5.1:numPoints, depth-3.1:depth+3.1:numPoints].reshape(4, -1).T
         trainingY = self.mogi(trainingX, xCenter = x, yCenter = y)
 
-        muMatrix, stdVector = gp.globalGaussianProcessRegression(trainingX, trainingY, self.testingX, 1.0, 4)
-        return muMatrix, stdVector
+        return trainingX, trainingY
 
     def mogi(self, matrixPoints, xCenter, yCenter):  # coordinates are strength, x, y, and magnitude of cavity depth
         displacements = np.empty((len(matrixPoints), 3))  # initialize displacements array
@@ -74,7 +74,7 @@ class MogiSim:
 
         trainingX = self.createCoordinates()
         trainingY = self.mogi(self.poisson, self.shearModulus, trainingX)
-        gp = GP()
+        #gp = GP()
 
         testingX = np.mgrid[-5:5:10j, -5:5:10j].reshape(2, -1).T
         testingX = np.hstack((testingX, np.full((len(testingX), 1), self.sourceDepth)))
