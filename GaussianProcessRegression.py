@@ -11,6 +11,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 from matplotlib import cm
+from scipy.optimize import minimize
+from scipy.optimize import check_grad
+from scipy.optimize import basinhopping
+import math
+from sklearn.metrics import mean_squared_error
 
 class GP:
 
@@ -91,6 +96,7 @@ class GP:
         L = np.linalg.cholesky(K)
         alpha = np.matmul(np.linalg.inv(L.T), np.matmul(np.linalg.inv(L), trainingY))
         muVector = np.matmul(Ks.T, alpha)
+
         v = np.matmul(np.linalg.inv(L), Ks)
         stdVector = np.squeeze(np.diag(Kss - np.matmul(v.T,v)))
 
@@ -116,9 +122,76 @@ class GP:
         plt.show()
 
 
+    def conductOptimization(self):
+        nTestingLinear = 50j
+        nTesting = 50
+        nTraining = 10
+
+        # trainingX = 20 * (np.random.rand(nTraining, 2)) - 10  # nTrainingx2 random points from -10 to 10
+        # trainingY = 6 * np.sin(trainingX[:, 0]) + 3 * np.sin(trainingX[:, 1])
+
+        testingX = np.mgrid[-10:10:50j, -10:10:50j].reshape(2, -1).T
+        synthetic = 6 * np.sin(testingX[:, 0]) + 3 * np.sin(testingX[:, 1])
+
+        p0 = np.array([1, 7])  # initial parameters 30, 10, 6, 6
+        bnds = ((0.5, 10), (0.5, 10))
+
+        # result = minimize(self.lossFunction, p0, method='Nelder-Mead', bounds = bnds, options={'disp': True, 'maxiter': 300})
+        minimizer_kwargs = {"bounds": bnds, "args": synthetic}
+        result = basinhopping(self.lossFunction, p0, minimizer_kwargs=minimizer_kwargs, stepsize=5, niter=20)
+        print(
+            "global minimum: x1 = %.4f, x2 x = %.4f | f(x0) = %.4f" % (
+            result.x[0], result.x[1], result.fun))
+
+    def lossFunction(self, x, synthetic):
+        print(x)
+        theta0 = np.array([1.0, 1.0, 1.0])
+
+        trainingX = np.mgrid[-10:10:25j, -10:10:25j].reshape(2, -1).T
+        trainingY = x[0] * np.sin(trainingX[:, 0]) + x[1] * np.sin(trainingX[:, 1])
+        testingX = np.mgrid[-10:10:50j, -10:10:50j].reshape(2, -1).T
+
+        minimum = minimize(self.nll, x0=theta0, args=(trainingX, trainingY), method='L-BFGS-B', bounds=[(1.0, 2.0), (0.01, 1.0), (0.01, 1.0)], jac=self.jacobianFunc) #tau and 4 hyperparam for each param
+        other = check_grad(self.nll, self.jacobianFunc, theta0, trainingX, trainingY)
+        hyperparameters = minimum.x
+        surrogateMeans, surrogateStds = self.globalGaussianProcessRegression(trainingX, trainingY, testingX, hyperparameters)
+
+        rmse = math.sqrt(mean_squared_error(synthetic, surrogateMeans))
+
+        # print(rmse)
+        # var2 = self.testingMatrix - self.ms.testingX
+
+        return rmse
+
+    def nll(self, theta, trainingX, trainingY):
+        cov_mat = self.kernel(trainingX, trainingX, theta)
+        cov_mat = cov_mat + 0.00005 * np.eye(len(trainingX))
+        self.covar = cov_mat
+        L = np.linalg.cholesky(cov_mat)
+        alpha = np.dot(np.linalg.inv(L.T), np.dot(np.linalg.inv(L), trainingY))
+        secondTerm = np.linalg.slogdet(cov_mat)
+        prob = - 0.5 * trainingY.T.dot(alpha) - 0.5 * secondTerm[1]
+        print(prob, theta)
+        return -prob, -grad#############################################################################
+
+    def jacobianFunc(self, hyperparameters, Xtrain, Ytrain):
+        grads = np.zeros(3)
+        L = np.linalg.cholesky(self.covar)
+        alpha = np.matmul(np.linalg.inv(L.T), np.matmul(np.linalg.inv(L), Ytrain))
+        firstTerm = np.dot(alpha, alpha.T) - np.linalg.inv(self.covar)
+        for i in range(1, 3):
+            column = Xtrain[:, i-1][None].T
+            squaredTerm = np.sum(column ** 2, 1).reshape(-1, 1) + np.sum(column ** 2, 1) - 2 * np.dot(column, column.T)
+            dKdtheta = np.multiply(self.covar, -0.5*squaredTerm)
+            grads[i] = 0.5*np.trace(np.dot(firstTerm, dKdtheta))
+        #return np.array([0.0, 1.0, 1.0, 1.0, 1.0])
+        return grads
+
+
+
     def conductRegression(self, nTraining, nTestingLinear, tau, sigma):
         trainingX = 20 * (np.random.rand(nTraining, 2)) - 10  # nTrainingx2 random points from -10 to 10
-        trainingY = np.sin(trainingX[:, 0]) + 3*np.sin(trainingX[:, 1])
+        trainingY = 5*np.sin(trainingX[:, 0]) + 3*np.sin(trainingX[:, 1])
         testingX = np.mgrid[-10:10:nTestingLinear, -10:10:nTestingLinear].reshape(2, -1).T
 
         # mean = np.mean(trainingY)
@@ -278,8 +351,9 @@ class GP:
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     gp = GP()
-    gp.gaussianProcess()
+    #gp.gaussianProcess()
     #gp.exponential2DTest()
+    gp.conductOptimization()
 
     # See PyCharm help at https://www.jetbrains.com/help/pycharm/
 

@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from numpy import linalg as LA
 from GaussianProcessRegression import GP
+from scipy.optimize import minimize
 import copy
 
 class MogiSim:
@@ -23,6 +24,7 @@ class MogiSim:
     testingX = None
     trainingX = None
     trainingY = None
+    gp = GP()
 
     # the two variables below are now combined into a strength parameter
     # radius = 0.4
@@ -32,7 +34,7 @@ class MogiSim:
         pass
 
     def createSynetheticData(self):
-        testingX = np.mgrid[0:15:10j, 0:15:10j].reshape(2, -1).T
+        testingX = np.mgrid[0:16:9j, 0:16:9j].reshape(2, -1).T
         testingX = np.hstack((testingX, np.full((len(testingX), 1), self.sourceDepth)))
         testingX = np.hstack((np.full((len(testingX), 1), self.sourceStrength), testingX))
         self.testingX = testingX
@@ -47,9 +49,10 @@ class MogiSim:
 
         numPoints = 4j
 
-        trainingX = np.mgrid[strength-10.5:strength+10.5:numPoints, x-5.1:x+5.1:numPoints, y-5.1:y+5.1:numPoints, depth-3.1:depth+3.1:numPoints].reshape(4, -1).T
-        trainingY = self.mogi(trainingX, xCenter = x, yCenter = y)
-
+        #trainingX = np.mgrid[strength-2.5:strength+2.5:numPoints, 0:16:9j, 0:16:9j, depth-3.1:depth+3.1:numPoints].reshape(4, -1).T
+        trainingX = np.mgrid[20:80:5j, 0:16:9j, 0:16:9j,
+                    0.1:10:5j].reshape(4, -1).T
+        trainingY = self.mogi(trainingX, xCenter=x, yCenter=y)
         return trainingX, trainingY
 
     def mogi(self, matrixPoints, xCenter, yCenter):  # coordinates are strength, x, y, and magnitude of cavity depth
@@ -64,11 +67,71 @@ class MogiSim:
 
 
 
+    def testStrength(self):
+        synthetics = np.zeros((51, 1))
+        surrogates = np.zeros((51, 1))
+        strengths = np.linspace(0, 401, 51)
+        theta0 = np.array([1.0, 1.0, 1.0, 1.0, 1.0])
+        for strength in strengths:
+            testingX = np.array([strength, 5, 10, 2])
+            testingX = np.vstack((testingX, testingX))
 
+            # training data
+            trainingX = np.linspace(strength - 2.5, strength + 2.5, 4, endpoint=True)[None].T
+            trainingX = np.hstack((trainingX, np.full((len(trainingX), 1), 5)))
+            trainingX = np.hstack((trainingX, np.full((len(trainingX), 1), 10)))
+            trainingX = np.hstack((trainingX, np.full((len(trainingX), 1), 2)))
 
+            syntheticDataVertical = self.mogi(testingX, xCenter = 5, yCenter = 10)[:, 2]
+            trainingY = self.mogi(trainingX, xCenter = 5, yCenter = 10)[:, 2]
+            minimum = minimize(self.nll, x0=copy.deepcopy(theta0), args=(trainingX, trainingY), method='L-BFGS-B',
+                                      bounds=[(1.0, 2.0), (0.01, 1.0), (0.01, 1.0), (0.01, 1.0), (0.01, 1.0)],
+                                      jac=True)  # tau and 4 hyperparam for each param
+            #print("h1 = %.4f, h2 = %.4f, h3 = %.4f, h4 = %.4f, h5 = %.4f | f(x0) = %.4f" % (minimum.x[0], minimum.x[1], minimum.x[2], minimum.x[3], minimum.x[4], minimum.fun))
+            surrogateMeans, surrogateStds = self.gp.globalGaussianProcessRegression(trainingX, trainingY,
+                                                                            testingX, minimum.x)
+            #works for more sampling in strengths, otherwise, it will underestimate the strength and
+            #even predict a lower strength than the training data itself (overfitting potentially)
+            #hyperparameters [1.0, 0.1, 0.1, 0.1, 0.1] make it a perfect fit
 
+            synthetics[int(strength/8)] = syntheticDataVertical[0]
+            surrogates[int(strength/8)] = surrogateMeans[0]
 
+        plot = plt.figure(1)
+        plt.plot(strengths, surrogates, c='b', marker='.')
+        plt.plot(strengths, synthetics, c='r', marker='.')
+        plt.legend(['Surrogates', 'Synthetics'])
+        plt.title("Surrogate vs Synthetic Output for Vertical Displacement at source for varying strengths (with hyperparameter optimization)")
+        plt.xlabel("Strengths")
+        plt.ylabel("Vertical Displacements")
+        plt.show()
 
+    def nll(self, theta, trainingX, trainingY):
+        initial = copy.deepcopy(trainingX)
+        cov_mat = self.gp.kernel(trainingX, trainingX, theta)
+        cov_mat = cov_mat + 0.00005 * np.eye(len(trainingX))
+        self.covar = cov_mat
+        L = np.linalg.cholesky(cov_mat)
+        alpha = np.dot(np.linalg.inv(L.T), np.dot(np.linalg.inv(L), trainingY))
+        secondTerm = np.linalg.slogdet(cov_mat)
+        prob = (- 0.5 * trainingY.reshape(1, -1).dot(alpha.reshape(-1, 1)) - 0.5 * secondTerm[1])[0][0]
+        print(prob, theta)
+
+        grads = np.zeros(len(theta))
+
+        # tau hyperparameter
+        firstTerm = np.dot(alpha.reshape(-1, 1), alpha.reshape(1, -1)) - np.dot(np.linalg.inv(L.T), np.linalg.inv(L))
+        grads[0] = 0.5 * np.trace(np.dot(firstTerm, cov_mat / theta[0]))
+
+        for i in range(1, len(theta)):
+            column = trainingX[:, i - 1].reshape(-1, 1)
+            squaredTerm = np.sum(column ** 2, 1).reshape(-1, 1) + np.sum(column ** 2, 1) - 2 * np.dot(column, column.T)
+            dKdtheta = np.multiply(cov_mat, (-0.5 * squaredTerm))
+            grads[i] = 0.5 * np.trace(np.dot(firstTerm, dKdtheta))
+        final = copy.deepcopy(trainingX)
+        var = initial - final
+        print(grads)
+        return -prob, -grads
 
     def simulateMogi(self):
 
@@ -147,4 +210,5 @@ class MogiSim:
 
 if __name__ == '__main__':
     ms = MogiSim()
-    ms.simulateMogi()
+    #ms.simulateMogi()
+    ms.testStrength()
