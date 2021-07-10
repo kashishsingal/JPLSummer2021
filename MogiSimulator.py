@@ -33,6 +33,28 @@ class MogiSim:
     def __init__(self):
         pass
 
+    def newMogi(self, xyLocations, params):  # coordinates are strength, x, y, and magnitude of cavity depth
+        displacements = np.empty((len(xyLocations), 3))  # initialize displacements array
+        coordinates = np.empty((len(xyLocations), 4))
+        coordinates[:, 0] = np.full((len(xyLocations)), params[0])
+        coordinates[:, 1] = xyLocations[:, 0] - params[1]
+        coordinates[:, 2] = xyLocations[:, 1] - params[2]
+        coordinates[:, 3] = np.full((len(xyLocations)), params[3])
+        Rvect = LA.norm(coordinates[:, 1:4], axis = 1).T
+        magVect = coordinates[:, 0] * (1 - self.poisson) / self.shearModulus/(np.power(Rvect, 3))
+        displacements = (coordinates[:, 1:4].T*magVect).T
+        return displacements
+
+    def mogi(self, matrixPoints, xCenter, yCenter):  # coordinates are strength, x, y, and magnitude of cavity depth
+        displacements = np.empty((len(matrixPoints), 3))  # initialize displacements array
+        coordinates = copy.deepcopy(matrixPoints)
+        coordinates[:, 1] = coordinates[:, 1] - xCenter
+        coordinates[:, 2] = coordinates[:, 2] - yCenter
+        Rvect = LA.norm(coordinates[:, 1:4], axis = 1).T
+        magVect = coordinates[:, 0] * (1 - self.poisson) / self.shearModulus/(np.power(Rvect, 3))
+        displacements = (coordinates[:, 1:4].T*magVect).T
+        return displacements
+
     def createSynetheticData(self):
         testingX = np.mgrid[0:16:9j, 0:16:9j].reshape(2, -1).T
         testingX = np.hstack((testingX, np.full((len(testingX), 1), self.sourceDepth)))
@@ -49,21 +71,17 @@ class MogiSim:
 
         numPoints = 4j
 
-        #trainingX = np.mgrid[strength-2.5:strength+2.5:numPoints, 0:16:9j, 0:16:9j, depth-3.1:depth+3.1:numPoints].reshape(4, -1).T
-        trainingX = np.mgrid[20:80:5j, 0:16:9j, 0:16:9j,
+        trainingX = np.mgrid[20:80:5j, 0:16:7j, 0:16:7j,
                     0.1:10:5j].reshape(4, -1).T
         trainingY = self.mogi(trainingX, xCenter=x, yCenter=y)
         return trainingX, trainingY
 
-    def mogi(self, matrixPoints, xCenter, yCenter):  # coordinates are strength, x, y, and magnitude of cavity depth
-        displacements = np.empty((len(matrixPoints), 3))  # initialize displacements array
-        coordinates = copy.deepcopy(matrixPoints)
-        coordinates[:, 1] = coordinates[:, 1] - xCenter
-        coordinates[:, 2] = coordinates[:, 2] - yCenter
-        Rvect = LA.norm(coordinates[:, 1:4], axis = 1).T
-        magVect = coordinates[:, 0] * (1 - self.poisson) / self.shearModulus/(np.power(Rvect, 3))
-        displacements = (coordinates[:, 1:4].T*magVect).T
-        return displacements
+    def createTraining(self):
+        numPoints = 4j
+
+        trainingX = np.mgrid[40:80:5j, 0:16:9j, 0:16:9j,
+                    0.1:10:5j].reshape(4, -1).T
+        return trainingX
 
 
 
@@ -107,7 +125,6 @@ class MogiSim:
         plt.show()
 
     def nll(self, theta, trainingX, trainingY):
-        initial = copy.deepcopy(trainingX)
         cov_mat = self.gp.kernel(trainingX, trainingX, theta)
         cov_mat = cov_mat + 0.00005 * np.eye(len(trainingX))
         self.covar = cov_mat
@@ -115,23 +132,20 @@ class MogiSim:
         alpha = np.dot(np.linalg.inv(L.T), np.dot(np.linalg.inv(L), trainingY))
         secondTerm = np.linalg.slogdet(cov_mat)
         prob = (- 0.5 * trainingY.reshape(1, -1).dot(alpha.reshape(-1, 1)) - 0.5 * secondTerm[1])[0][0]
-        print(prob, theta)
 
         grads = np.zeros(len(theta))
 
-        # tau hyperparameter
-        firstTerm = np.dot(alpha.reshape(-1, 1), alpha.reshape(1, -1)) - np.dot(np.linalg.inv(L.T), np.linalg.inv(L))
-        grads[0] = 0.5 * np.trace(np.dot(firstTerm, cov_mat / theta[0]))
+        #tau hyperparameter
+        firstTerm = np.matmul(alpha.reshape(-1,1),alpha.reshape(1,-1)) - np.dot(np.linalg.inv(L.T), np.linalg.inv(L))
+        grads[0] = 0.5 * np.trace(np.dot(firstTerm, cov_mat/theta[0]))
 
         for i in range(1, len(theta)):
             column = trainingX[:, i - 1].reshape(-1, 1)
             squaredTerm = np.sum(column ** 2, 1).reshape(-1, 1) + np.sum(column ** 2, 1) - 2 * np.dot(column, column.T)
             dKdtheta = np.multiply(cov_mat, (-0.5 * squaredTerm))
             grads[i] = 0.5 * np.trace(np.dot(firstTerm, dKdtheta))
-        final = copy.deepcopy(trainingX)
-        var = initial - final
-        print(grads)
         return -prob, -grads
+
 
     def simulateMogi(self):
 
