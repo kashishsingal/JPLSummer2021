@@ -84,7 +84,7 @@ class LSOptimization:
 
         #intialParams - strength, x, y, depth
         # actual values: 64, 5, 10, 2
-        p0 = np.array([64, 5, 10, 2]) #100, 2, 50, 10
+        p0 = np.array([100, 2, 50, 10]) #100, 2, 50, 10
         bnds = ((20, 80), (1, 15), (1, 15), (0.5, 10))
         self.gpr = GaussianProcessRegressor(normalize_y=True).fit(trainingParams, trainingY)
         #CHECK DIMENSIONS
