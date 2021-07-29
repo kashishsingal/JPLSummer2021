@@ -17,10 +17,12 @@ class MogiSim:
 
     poisson = 0.25
     shearModulus = 1
+
+    sourceStrength = 64
     sourceX = 5
     sourceY = 10
     sourceDepth = 2
-    sourceStrength = 64
+
     testingX = None
     trainingX = None
     trainingY = None
@@ -79,7 +81,7 @@ class MogiSim:
     def createTraining(self):
         numPoints = 4j
 
-        trainingX = np.mgrid[40:80:5j, 0:16:9j, 0:16:9j,
+        trainingX = np.mgrid[40:80:5j, 0:16:5j, 0:16:5j,
                     0.1:10:5j].reshape(4, -1).T
         return trainingX
 
