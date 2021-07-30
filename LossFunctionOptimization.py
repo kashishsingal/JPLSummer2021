@@ -1,4 +1,5 @@
 import copy
+import warnings
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -1009,16 +1010,110 @@ class LSOptimization:
         plt.legend(["Actual Mogi Profile", "Surrogate Profile"])
         plt.show()
 
+    def spaceInterpolationComparison(self):
+        warnings.filterwarnings("ignore")
+        numGS = 1000
+        profile = np.linspace(1, 15, numGS).reshape(-1, 1)
+        constantVals = np.full(profile.shape, 5).reshape(-1, 1)
+        profile4 = np.hstack((constantVals, profile))  # x = 5
+
+        self.syntheticData = self.ms.newMogi(profile4, np.array([64, 5, 10, 2]))[:, 2]  # vertical displacements
+
+        # niter = 4
+        fig1, axis = plt.subplots(nrows=2, ncols=2)
+        fig1.suptitle("Displacement Interpolation as Vector for GSs and as scalar for single GS along x=5")
+        # plt.subplots_adjust(hspace=0.4)
+
+        for i in range(4):
+            bounds = ((44, 84), (3, 7), (7, 13), (0.5, 3.5))
+            strengthUniform = np.random.uniform(bounds[0][0], bounds[0][1], size=(3, 1))
+            xUniform = np.random.uniform(bounds[1][0], bounds[1][1], size=(3, 1))
+            yUniform = np.random.uniform(bounds[2][0], bounds[2][1], size=(3, 1))
+            zUniform = np.random.uniform(bounds[3][0], bounds[3][1], size=(3, 1))
+
+            trainingX1 = np.hstack((np.hstack((np.hstack((strengthUniform, xUniform)), yUniform)), zUniform))
+
+            # trainingX1 = np.mgrid[40:90:3j, 2:8:3j, 6:14:3j, 0.1:4:3j].reshape(4, -1).T  # initial training data set
+
+            trainingY = np.empty((len(trainingX1), len(profile4)))
+
+            count = 0
+            for param in trainingX1:
+                displacements = self.ms.newMogi(profile4, param)
+                trainingY[count, :] = displacements[:, 2]
+                count = count + 1
+
+            kernel = ConstantKernel() * Matern(nu=0.5, length_scale=np.array([0.1, 0.1, 0.1, 0.1]),
+                                               length_scale_bounds=(0.001, 100))
+            gpr1 = GaussianProcessRegressor(kernel=kernel, normalize_y=True, n_restarts_optimizer=30)
+
+            kernel2 = ConstantKernel() * Matern(nu=0.5, length_scale=np.array([0.1, 0.1, 0.1, 0.1, 0.1, 0.1]),
+                                               length_scale_bounds=(0.001, 100))
+            gpr2 = GaussianProcessRegressor(kernel=kernel2, normalize_y=True, n_restarts_optimizer=30)
+
+            trainingX2 = np.empty((len(trainingX1)*numGS, 6))
+            newTrainingY = np.empty((len(trainingX1)*numGS, 1))
+            trainingX1row = 0
+            trainingX2row = 0
+            profilerow = 0
+            for verticalDisplacements in trainingY:
+                for displacement in verticalDisplacements:
+                    trainingX2[trainingX2row, :] = np.hstack((profile4[profilerow, :].reshape(1, 2), trainingX1[trainingX1row, :].reshape(1, 4)))
+                    newTrainingY[trainingX2row, 0] = displacement
+                    profilerow = profilerow + 1
+                    trainingX2row = trainingX2row + 1
+                profilerow = 0
+                trainingX1row = trainingX1row + 1
+
+            testingX = np.empty((len(profile4), 6))
+            for rowNum in range(len(profile4)):
+                testingX[rowNum, :] = np.hstack((profile4[rowNum, :], np.array([64, 5, 10, 2])))
+
+            print("Fitting data...")
+
+            print("Time taken to fit vector output: ")
+            startTime = timeit.default_timer()
+            gpr1.fit(trainingX1, trainingY)
+            gpr1Time = timeit.default_timer() - startTime
+            print(gpr1Time)
+
+            print("Time taken to fit scalar output: ")
+            startTime = timeit.default_timer()
+            gpr2.fit(trainingX2, newTrainingY.reshape(-1, 1))
+            gpr2Time = timeit.default_timer() - startTime
+            print(gpr2Time)
+
+            gpr1Data = gpr1.predict(np.array([64, 5, 10, 2]).reshape(1, -1))  # output 1x15
+            gpr2Data = gpr2.predict(testingX)  # 15x1
+
+            plot = plt.subplot(2, 2, i+1)
+            plt.plot(profile4[:, 1], self.syntheticData[:].reshape(-1), 'k')
+            plt.plot(profile4[:, 1], gpr1Data.reshape(-1), 'r')
+            plt.plot(profile4[:, 1], gpr2Data.reshape(-1), 'b')
+            plt.xlabel("Y (along X=5)")
+            plt.ylabel("Vertical Displacement")
+            plt.legend(["Mogi Output", "Vector Output, Run time: %.4f secs" % (gpr1Time), "Scalar Output, Run time: %.4f secs" % (gpr2Time)], loc=2)
+
+        plt.show()
+
+
+
+
+
+
+
 if __name__ == '__main__':
     ls = LSOptimization()
     # ls.conductOptimization()
     # ls.testingMinimize()
     # ls.testGP()
     # ls.optimizationLoop2()
-    ls.optimizationLoop3()
+    # ls.optimizationLoop3()
     # ls.optimizationLoop1DTest()
     # ls.optimizationArticle()
     # ls.checkGaussian()
+    ls.spaceInterpolationComparison()
+
 # if(x[0] > 60 and x[0] < 65 and x[1] > 4.8 and x[1] < 5.2 and x[2] > 9.8 and x[2] < 10.2 and x[3] > 1.5 and x[3] < 2.5):
 #     print(rmse)
 #     print(x)
