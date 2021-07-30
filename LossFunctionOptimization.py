@@ -10,6 +10,7 @@ from scipy.optimize import check_grad
 from scipy.optimize import basinhopping
 from sklearn.metrics import mean_squared_error
 from GaussianProcessRegression import GP
+from sklearn.preprocessing import StandardScaler
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, RBF, WhiteKernel
 from scipy.stats import norm
@@ -26,6 +27,7 @@ class LSOptimization:
     gp = GP()
     gpr = None
     covar = None
+    scaler = None
     groundStations = np.mgrid[1:15:20j, 1:15:20j].reshape(2, -1).T
     profile = np.linspace(1, 15, 30).reshape(-1, 1)
     constantVals = np.full(profile.shape, 3).reshape(-1, 1)
@@ -278,7 +280,7 @@ class LSOptimization:
         # m52 = Matern()
         # kernel = ConstantKernel() * RBF(length_scale=np.array([0.1, 0.1, 0.1, 0.1]))  # + WhiteKernel()
         kernel = ConstantKernel() * Matern(nu=0.5, length_scale=np.array([0.1, 0.1, 0.1, 0.1]), length_scale_bounds=(0.001, 100))
-        self.gpr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=30)
+        self.gpr = GaussianProcessRegressor(kernel=kernel, normalize_y=True, n_restarts_optimizer=30)
         for param in self.trainingX:
             displacements = self.ms.newMogi(self.profile3, param)
             trainingY[count, :] = displacements[:, 2]
@@ -294,20 +296,22 @@ class LSOptimization:
             # conduct regression
             print("Time to fit:")
             startt = timeit.default_timer()
-            self.gpr.fit(self.trainingX, trainingY)
+            self.scaler = StandardScaler().fit(self.trainingX)
+            X_scaled = self.scaler.transform(self.trainingX)
+            self.gpr.fit(X_scaled, trainingY)
             print(self.gpr.kernel_)
             print(timeit.default_timer() - startt)
 
             print("basinhopping")
             X_next = self.propose_location(self.expected_improvement, self.trainingX, trainingY, self.gpr, bnds)
 
-            surrogateMeans = self.gpr.predict(X_next.reshape(1, -1))
+            surrogateMeans = self.gpr.predict(self.scaler.transform(X_next.reshape(1, -1)))
             rmse = math.sqrt(mean_squared_error(self.syntheticData.reshape(1, -1), surrogateMeans))
 
             if (i == 0):
-                secondDisplacements = self.gpr.predict(X_next.reshape(1, -1))
+                secondDisplacements = surrogateMeans
             elif (i == 49):
-                lastDisplacements = self.gpr.predict(X_next.reshape(1, -1))
+                lastDisplacements = surrogateMeans
 
             print(
                 "added point: strength = %.4f, source x = %.4f, source y = %.4f, source depth = %.4f, RMSE = %.4f" % (
@@ -399,7 +403,7 @@ class LSOptimization:
 
         uniformX = np.hstack((np.hstack((np.hstack((strengthUniform, xUniform)), yUniform)), zUniform))
 
-        mu_sample = gpr.predict(X_sample)
+        mu_sample = gpr.predict(self.scaler.transform(X_sample))
         mu_sample_rms = np.empty((len(mu_sample), 1))
         for i in range(len(mu_sample)):
             mu_sample_rms[i] = math.sqrt(
@@ -456,7 +460,7 @@ class LSOptimization:
             Expected improvements at points X.
         '''
 
-        mu, sigma = gpr.predict(X, return_std=True)
+        mu, sigma = gpr.predict(self.scaler.transform(X), return_std=True)
         mu = math.sqrt(mean_squared_error(self.syntheticData.reshape(1, -1), mu))
 
         sigma = np.mean(sigma.reshape(-1, 1))
@@ -471,8 +475,8 @@ class LSOptimization:
         return ei
 
     def optimizationLoop3(self):
-        secondDisplacements = None
-        lastDisplacements = None
+        secondParam = None
+        lastParam = None
 
         start = timeit.default_timer()
         self.syntheticData = self.ms.newMogi(self.profile3, np.array([64, 5, 10, 2]))[:, 2]  # vertical displacements
@@ -480,17 +484,16 @@ class LSOptimization:
 
         bnds = ((44, 84), (3, 7), (7, 13), (0.5, 3.5))  # assume bounds aren't changing through each iteration
         allVals = np.array([1, 1, 1, 1, None])
-        trainingY = np.empty((len(self.trainingX), len(self.profile3)))
+        trainingY = np.empty([len(self.trainingX), 1])
         count = 0
         kernel = ConstantKernel() * Matern(nu=0.5, length_scale=0.1, length_scale_bounds=(0.001, 100))
-        self.gpr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=30)
+        self.gpr = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=30, normalize_y=True)
         for param in self.trainingX:
             displacements = self.ms.newMogi(self.profile3, param)
-            trainingY[count] = math.sqrt(
-                mean_squared_error(self.syntheticData.reshape(1, -1), displacements[:, 2].reshape(1, -1)))
+            trainingY[count, 0] = math.sqrt(mean_squared_error(self.syntheticData.reshape(1, -1), displacements[:, 2].reshape(1, -1)))
             count = count + 1
 
-        for i in range(100):
+        for i in range(500):
             print(i)
             # conduct regression
             print("Time to fit:")
@@ -500,14 +503,15 @@ class LSOptimization:
             print(timeit.default_timer() - startt)
 
             print("basinhopping")
-            X_next = self.propose_location(self.expected_improvement, self.trainingX, trainingY, self.gpr, bnds)
+            X_next = self.propose_locationRMSE(self.expected_improvementRMSE, self.trainingX, trainingY, self.gpr, bnds)
 
             surrogateMean = self.gpr.predict(X_next.reshape(1, -1))
+            surrogateMean = surrogateMean[0][0]
 
             if (i == 0):
-                secondDisplacements = self.gpr.predict(X_next.reshape(1, -1))
-            elif (i == 99):
-                lastDisplacements = self.gpr.predict(X_next.reshape(1, -1))
+                secondParam = X_next
+            elif (i == 499):
+                lastParam = X_next
 
             print(
                 "added point: strength = %.4f, source x = %.4f, source y = %.4f, source depth = %.4f, RMSE = %.4f" % (
@@ -517,23 +521,8 @@ class LSOptimization:
             allVallCurr = np.array([X_next[0], X_next[1], X_next[2], X_next[3], surrogateMean])
             allVals = np.vstack((allVals, allVallCurr))
 
-            # for adding multiple training points
-
-            # addedPoints = np.mgrid[X_next[0] - 10:X_next[0] + 10:3j,
-            #               X_next[1] - 3:X_next[1] + 3:3j,
-            #               X_next[2] - 3:X_next[2] + 3:3j,
-            #               X_next[3] - 2:X_next[3] + 2:3j].reshape(4, -1).T
-            #
-            # self.trainingX = np.vstack((self.trainingX, addedPoints))
-
-            # for param in addedPoints:
-            #     displacements = self.ms.newMogi(self.groundStations, param)
-            #     trainingY = np.vstack((trainingY, displacements[:, 2]))
-
-            # for adding only a single training point
-
             Y_nextVerticalDisplacements = self.ms.newMogi(self.profile3, X_next.reshape(-1, 1))[:, 2]
-            Y_next = math.sqrt(mean_squared_error(self.syntheticData.reshape(1, -1), Y_nextVerticalDisplacements[:, 2].reshape(1, -1)))
+            Y_next = math.sqrt(mean_squared_error(self.syntheticData.reshape(1, -1), Y_nextVerticalDisplacements.reshape(1, -1)))
             # Add sample to previous samples
             self.trainingX = np.vstack((self.trainingX, X_next.reshape(1, -1)))
             trainingY = np.vstack((trainingY, np.array([Y_next]).reshape(1, -1)))
@@ -541,6 +530,87 @@ class LSOptimization:
         df = pd.DataFrame(allVals)
         df.to_clipboard(index=False, header=False)
         print(timeit.default_timer() - start)
+
+        plot = plt.figure(1)
+        plt.plot(self.profile3[:, 1], self.syntheticData[:].reshape(-1), 'k')
+        plt.plot(self.profile3[:, 1], self.ms.newMogi(self.profile3, secondParam.reshape(-1, 1))[:, 2], 'r')
+        plt.plot(self.profile3[:, 1], self.ms.newMogi(self.profile3, lastParam.reshape(-1, 1))[:, 2], 'b')
+        plt.xlabel("Y (along X=5)")
+        plt.ylabel("Vertical Displacement")
+        plt.title("Synthetic vs. Surrogate for profile along x=5")
+        plt.legend(["Synthetic", "First Predicted Parameters", "Last Predicted Parameters"])
+
+        plt.show()
+
+    def propose_locationRMSE(self, acquisition, X_sample, Y_sample, gpr, bounds, n_restarts=10):
+        '''
+        Proposes the next sampling point by optimizing the acquisition function.
+
+        Args:
+            acquisition: Acquisition function.
+            X_sample: Sample locations (n x d).
+            Y_sample: Sample values (n x 1).
+            gpr: A GaussianProcessRegressor fitted to samples.
+
+        Returns:
+            Location of the acquisition function maximum.
+        '''
+
+        min_val = 1e10
+        min_x = None
+
+        def min_obj(X, mu_sample_opt):
+            # Minimization objective is the negative acquisition function
+            return -acquisition(X.reshape(1, -1), mu_sample_opt, X_sample, Y_sample, gpr)
+
+        # Find the best optimum by starting from n_restart different random points.
+
+        mu_sample_rms = gpr.predict(X_sample)
+
+        # Needed for noise-based model,
+        # otherwise use np.max(Y_sample).
+        # See also section 2.4 in [1]
+        mu_sample_opt = np.min(mu_sample_rms)
+        #bnds = ((40, 80), (1, 15), (1, 15), (0.5, 10))  # assume bounds aren't changing through each iteration
+        minimizer_kwargs = {"bounds": bounds, "args": (mu_sample_opt)}
+
+        x0 = np.array([45, 2, 2, 1])
+        # basinhopping function
+        start = timeit.default_timer()
+        res = basinhopping(min_obj, x0, minimizer_kwargs=minimizer_kwargs, stepsize=2, niter=100, disp=False)
+        print(timeit.default_timer() - start)
+        min_val = res.fun
+        min_x = res.x
+
+        return min_x.reshape(-1, 1)
+
+    def expected_improvementRMSE(self, X, mu_sample_opt, X_sample, Y_sample, gpr, xi=0.001):
+        '''
+        Computes the EI at points X based on existing samples X_sample
+        and Y_sample using a Gaussian process surrogate model.
+
+        Args:
+            X: Points at which EI shall be computed (m x d).
+            X_sample: Sample locations (n x d).
+            Y_sample: Sample values (n x 1).
+            gpr: A GaussianProcessRegressor fitted to samples.
+            xi: Exploitation-exploration trade-off parameter.
+
+        Returns:
+            Expected improvements at points X.
+        '''
+
+        mu, sigma = gpr.predict(X, return_std=True)
+        sigma = np.mean(sigma.reshape(-1, 1))
+
+        with np.errstate(divide='warn'):
+            imp = mu_sample_opt - mu - xi
+            Z = imp / sigma
+            ei = imp * norm.cdf(Z) + sigma * norm.pdf(Z)
+            if (sigma == 0.0):
+                ei = 0.0
+
+        return ei[0][0]
 
 
     def nll(self, theta, trainingX, trainingY):
@@ -944,7 +1014,8 @@ if __name__ == '__main__':
     # ls.conductOptimization()
     # ls.testingMinimize()
     # ls.testGP()
-    ls.optimizationLoop2()
+    # ls.optimizationLoop2()
+    ls.optimizationLoop3()
     # ls.optimizationLoop1DTest()
     # ls.optimizationArticle()
     # ls.checkGaussian()
