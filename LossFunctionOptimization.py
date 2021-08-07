@@ -1,8 +1,10 @@
 import copy
+import random
 import warnings
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mp
 from numpy import linalg as LA
 from GaussianProcessRegression import GP
 from MogiSimulator import MogiSim
@@ -19,6 +21,8 @@ import matplotlib.pyplot as plt
 import math
 import timeit
 import pandas as pd
+import xlrd
+from smt.sampling_methods import LHS
 
 
 class LSOptimization:
@@ -27,6 +31,9 @@ class LSOptimization:
     testingMatrix = None
     gp = GP()
     gpr = None
+    gprX = None
+    gprY = None
+    gprZ = None
     covar = None
     scaler = None
     groundStations = np.mgrid[1:15:20j, 1:15:20j].reshape(2, -1).T
@@ -84,55 +91,293 @@ class LSOptimization:
 
         # get vertical displacement synthetic data from mogi simulator
         # vertDisplacementWithNoise = self.ms.createSynetheticData() #HAS NO NOISE
-        self.syntheticData = self.ms.newMogi(self.groundStations, np.array([64, 5, 10, 2]))[:,
-                             2]  # vertical displacements
+        self.syntheticData = self.ms.newMogi(self.groundStations, np.array([6.4, 5, 10, 2]))[:, 2] # vertical displacements
+        gaussianNoise = np.random.normal(0, 0.1*np.std(self.syntheticData), size = self.syntheticData.shape)
+        print(gaussianNoise)
+        self.syntheticData = self.syntheticData + gaussianNoise
         # self.testingMatrix = self.ms.testingX
 
-        # get training parameters
-        #trainingParams = self.ms.createTraining()
-        trainingParams = np.mgrid[40:80:5j, 0:16:5j, 0:16:5j,
-                    0.1:10:5j].reshape(4, -1).T
-        trainingY = np.empty((len(trainingParams), len(self.groundStations)))
+        bounds = ((4.4, 8.4), (3, 7), (7, 13), (0.5, 3.5))
+        numPoints = 100
+        numGS = 20
+        # strengthUniform = np.random.uniform(bounds[0][0], bounds[0][1], size=(numPoints, 1))
+        # xUniform = np.random.uniform(bounds[1][0], bounds[1][1], size=(numPoints, 1))
+        # yUniform = np.random.uniform(bounds[2][0], bounds[2][1], size=(numPoints, 1))
+        # zUniform = np.random.uniform(bounds[3][0], bounds[3][1], size=(numPoints, 1))
+        # self.trainingX = np.hstack((np.hstack((np.hstack((strengthUniform, xUniform)), yUniform)), zUniform))
+
+        xlimits = np.array([[4.4, 8.4], [3, 7], [7, 13], [0.5, 3.5]])
+        sampling = LHS(xlimits=xlimits)
+        self.trainingX = sampling(numPoints)
+
+        trainingY = np.empty((len(self.trainingX), len(self.groundStations)))
+
         count = 0
-        for param in trainingParams:
+        for param in self.trainingX:
             displacements = self.ms.newMogi(self.groundStations, param)
             trainingY[count, :] = displacements[:, 2]
             count = count + 1
 
-        # intialParams - strength, x, y, depth
+        self.scaler = StandardScaler().fit(self.trainingX)
+        self.trainingX = self.scaler.transform(self.trainingX)
+
+        kernel = ConstantKernel() * Matern(nu=0.5, length_scale=np.array([0.1, 0.1, 0.1, 0.1]), length_scale_bounds=(0.001, 100))
+        self.gpr = GaussianProcessRegressor(kernel=kernel, normalize_y=True, n_restarts_optimizer=30)
+
+        timestart = timeit.default_timer()
+        self.gpr.fit(self.trainingX, trainingY)
+        timeelaspsed = timeit.default_timer() - timestart
+        print("Time taken to fit: %.4f" % (timeelaspsed))
+
+        interpolatedData, stds = self.gpr.predict(self.scaler.transform(np.array([6.4, 5, 10, 2]).reshape(1, -1)), return_std=True)
+        interpolatedData = interpolatedData.reshape(numGS, numGS)
+        # print(stds)
+
+
+        # actual values: 64, 5, 10, 2
+        # p0 = np.array([100, 2, 50, 10])  # 100, 2, 50, 10
+        # minimizer_kwargs = {"bounds": bounds}
+        # timestart = timeit.default_timer()
+        # result = basinhopping(self.lossFunction, p0, minimizer_kwargs=minimizer_kwargs, stepsize=2, niter=100)
+        # timeelaspsed = timeit.default_timer() - timestart
+        #
+        # print("Time taken to run basinhopping: %.4f" % (timeelaspsed))
+        # print()
+        # print(
+        #     "global minimum: strength = %.4f, source x = %.4f, source y = %.4f, source depth = %.4f | f(x0) = %.4f" % (
+        #     result.x[0], result.x[1], result.x[2], result.x[3], result.fun))
+        #
+        # bestData = self.gpr.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
+
+        fig, axs = plt.subplots(1, 2)
+        fig.suptitle('Mogi vs. Surrogate Vertical Displacement Output for Parameters 6.4 (GPa)($km^3$), 5 km, 10 km, 2 km')
+
+        pltt = axs[0]
+        pltt.set_aspect('equal')
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS), self.groundStations[:, 1].reshape(numGS, numGS), self.syntheticData.reshape(numGS, numGS),
+                            150, vmin=0, vmax=1.2, cmap="magma")
+        cbar = fig.colorbar(con, ax=pltt)
+        cbar.ax.set_ylabel('Vertical Displacement (km)', rotation=90)
+        cbar.ax.get_yaxis().labelpad = 10
+        pltt.set_title("Mogi Model")
+        pltt.set_xlabel("X (km)")
+        pltt.set_ylabel("Y (km)")
+
+        pltt = axs[1]
+        pltt.set_aspect('equal')
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS), self.groundStations[:, 1].reshape(numGS, numGS), interpolatedData, 150,
+                            cmap="magma", vmin=0, vmax=1.2)
+        # con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+        #                     self.groundStations[:, 1].reshape(numGS, numGS), bestData, 10,
+        #              cmap="magma", vmin=-5, vmax=15, extend='both')
+        cbar = fig.colorbar(con, ax=pltt)
+        cbar.ax.set_ylabel('Vertical Displacement (km)', rotation=90)
+        cbar.ax.get_yaxis().labelpad = 10
+        pltt.set_title("Surrogate Model")
+        pltt.set_xlabel("X (km)")
+        pltt.set_ylabel("Y (km)")
+
+        # fig.savefig('test2png.png', dpi=100)
+
+        fig, axs = plt.subplots(1, 1)
+        axs.set_aspect('equal')
+        con = axs.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+                            self.groundStations[:, 1].reshape(numGS, numGS),
+                            self.syntheticData.reshape(numGS, numGS) - interpolatedData, 150,
+                            cmap="magma", vmin=-0.15, vmax=0.15)
+
+        # plt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+        #              self.groundStations[:, 1].reshape(numGS, numGS),
+        #              self.syntheticData.reshape(numGS, numGS) - bestData, 10,
+        #              cmap="magma", vmin=-5, vmax=15)
+        cbar = fig.colorbar(con, ax = axs)
+        cbar.ax.set_ylabel('Vertical Displacement (km)', rotation=90)
+        cbar.ax.get_yaxis().labelpad = 10
+        plt.title("Difference Between Mogi and Surrogate Vertical Displacement Data")
+        # axs.set_title("Difference Between Synthetic and Best Fit Model Vertical Displacement Data")
+        axs.set_xlabel("X (km)")
+        axs.set_ylabel("Y (km)")
+
+        plt.show()
+        #Synthetic Data
+        #Best Fit Model
+
+
+
+        # plot = plt.figure(1)
+        # plt.plot(self.groundStations[:19, 1], self.syntheticData[:19].reshape(-1), 'r')
+        # plt.plot(self.groundStations[:19, 1], self.gpr.predict(result.x.reshape(1, -1))[0, :19], 'b')
+        # plt.xlabel("Y")
+        # plt.ylabel("Vertical Displacement")
+        # plt.title("Synthetic vs Surrogate Output along x=1")
+        # plt.legend(["Synthetic", "Surrogate"])
+        # plt.show()
+
+    def lossFunction(self, x):
+        surrogateMeans = self.gpr.predict(self.scaler.transform(x.reshape(1, -1)))
+        rmse = math.sqrt(mean_squared_error(self.syntheticData.reshape(1, -1), surrogateMeans))
+        return rmse
+
+    def conductOptimization2(self):
+        #for displacements in all 3 dimensions
+        self.syntheticData = self.ms.newMogi(self.groundStations, np.array([64, 5, 10, 2])) # vertical displacements
+        gaussianNoise = np.random.normal(0, 0.01, size = self.syntheticData.shape)
+        self.syntheticData = self.syntheticData + gaussianNoise
+        self.syntheticData = abs(self.syntheticData)
+        # self.testingMatrix = self.ms.testingX
+
+        bounds = ((44, 84), (3, 7), (7, 13), (0.5, 3.5))
+        numPoints = 80
+        numGS = 20
+
+        xlimits = np.array([[44, 84], [3, 7], [7, 13], [0.5, 3.5]])
+        sampling = LHS(xlimits=xlimits)
+        self.trainingX = sampling(numPoints)
+
+        trainingYx = np.empty((len(self.trainingX), len(self.groundStations)))
+        trainingYy = np.empty((len(self.trainingX), len(self.groundStations)))
+        trainingYz = np.empty((len(self.trainingX), len(self.groundStations)))
+
+        count = 0
+        for param in self.trainingX:
+            displacements = abs(self.ms.newMogi(self.groundStations, param))
+            trainingYx[count, :] = displacements[:, 0]
+            trainingYy[count, :] = displacements[:, 1]
+            trainingYz[count, :] = displacements[:, 2]
+            count = count + 1
+
+        self.scaler = StandardScaler().fit(self.trainingX)
+        self.trainingX = self.scaler.transform(self.trainingX)
+
+        kernelX = ConstantKernel() * Matern(nu=0.5, length_scale=np.array([0.1, 0.1, 0.1, 0.1]), length_scale_bounds=(0.001, 100))
+        kernelY = ConstantKernel() * Matern(nu=0.5, length_scale=np.array([0.1, 0.1, 0.1, 0.1]),
+                                            length_scale_bounds=(0.001, 100))
+        kernelZ = ConstantKernel() * Matern(nu=0.5, length_scale=np.array([0.1, 0.1, 0.1, 0.1]),
+                                            length_scale_bounds=(0.001, 100))
+
+        self.gprX = GaussianProcessRegressor(kernel=kernelX, normalize_y=True, n_restarts_optimizer=30)
+        self.gprY = GaussianProcessRegressor(kernel=kernelY, normalize_y=True, n_restarts_optimizer=30)
+        self.gprZ = GaussianProcessRegressor(kernel=kernelZ, normalize_y=True, n_restarts_optimizer=30)
+
+        timestart = timeit.default_timer()
+        self.gprX.fit(self.trainingX, trainingYx)
+        self.gprY.fit(self.trainingX, trainingYy)
+        self.gprZ.fit(self.trainingX, trainingYz)
+        timeelaspsed = timeit.default_timer() - timestart
+        print("Time taken to fit: %.4f" % (timeelaspsed))
+
+        interpolatedDataX, stdsX = self.gprX.predict(self.scaler.transform(np.array([64, 5, 10, 2]).reshape(1, -1)), return_std=True)
+        interpolatedDataX = interpolatedDataX.reshape(numGS, numGS)
+
+        interpolatedDataY, stdsY = self.gprY.predict(self.scaler.transform(np.array([64, 5, 10, 2]).reshape(1, -1)), return_std=True)
+        interpolatedDataY = interpolatedDataY.reshape(numGS, numGS)
+
+        interpolatedDataZ, stdsZ = self.gprZ.predict(self.scaler.transform(np.array([64, 5, 10, 2]).reshape(1, -1)), return_std=True)
+        interpolatedDataZ = interpolatedDataZ.reshape(numGS, numGS)
+
+
         # actual values: 64, 5, 10, 2
         p0 = np.array([100, 2, 50, 10])  # 100, 2, 50, 10
-        bnds = ((40, 80), (1, 15), (1, 15), (0.5, 10))
+        minimizer_kwargs = {"bounds": bounds}
         timestart = timeit.default_timer()
-        self.gpr = GaussianProcessRegressor(normalize_y=True).fit(trainingParams, trainingY)
+        result = basinhopping(self.lossFunction2, p0, minimizer_kwargs=minimizer_kwargs, stepsize=2, niter=100)
         timeelaspsed = timeit.default_timer() - timestart
-        print(timeelaspsed)
 
-        minimizer_kwargs = {"bounds": bnds}
-        result = basinhopping(self.lossFunction, p0, minimizer_kwargs=minimizer_kwargs, stepsize=10, niter=500)
+        print("Time taken to run basinhopping: %.4f" % (timeelaspsed))
+        print()
         print(
             "global minimum: strength = %.4f, source x = %.4f, source y = %.4f, source depth = %.4f | f(x0) = %.4f" % (
             result.x[0], result.x[1], result.x[2], result.x[3], result.fun))
 
-        plot = plt.figure(1)
-        plt.plot(self.groundStations[:19, 1], self.syntheticData[:19].reshape(-1), 'r')
-        plt.plot(self.groundStations[:19, 1], self.gpr.predict(result.x.reshape(1, -1))[0, :19], 'b')
-        plt.xlabel("Y")
-        plt.ylabel("Vertical Displacement")
-        plt.title("Synthetic vs Surrogate Output along x=1")
-        plt.legend(["Synthetic", "Surrogate"])
+        bestDataX = self.gprX.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
+        bestDataY = self.gprY.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
+        bestDataZ = self.gprZ.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
+
+        fig1, axs = plt.subplots(1, 2)
+        fig1.suptitle('Mogi vs. Surrogate Output for Parameters 64 GPa/m^3, 5m, 10m, 2m in X direction')
+
+        pltt = axs[0]
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS), self.groundStations[:, 1].reshape(numGS, numGS), self.syntheticData[:, 0].reshape(numGS, numGS), 10, vmin=-5, vmax=15, cmap="magma", extend='both')
+        fig1.colorbar(con, ax=pltt)
+        pltt.set_title("Synthetic Data")
+        pltt.set_xlabel("X")
+        pltt.set_ylabel("Y")
+
+        pltt = axs[1]
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+                            self.groundStations[:, 1].reshape(numGS, numGS), bestDataX, 10,
+                            cmap="magma", vmin=-5, vmax=15, extend='both')
+        fig1.colorbar(con, ax=pltt)
+        pltt.set_title("Best Fit Model Data")
+        pltt.set_xlabel("X")
+        pltt.set_ylabel("Y")
+
+        fig2, axs = plt.subplots(1, 2)
+        fig2.suptitle('Mogi vs. Surrogate Output for Parameters 64 GPa/m^3, 5m, 10m, 2m in Y direction')
+
+        pltt = axs[0]
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+                            self.groundStations[:, 1].reshape(numGS, numGS),
+                            self.syntheticData[:, 1].reshape(numGS, numGS), 10, vmin=-5, vmax=15, cmap="magma",
+                            extend='both')
+        fig2.colorbar(con, ax=pltt)
+        pltt.set_title("Synthetic Data")
+        pltt.set_xlabel("X")
+        pltt.set_ylabel("Y")
+
+        pltt = axs[1]
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+                            self.groundStations[:, 1].reshape(numGS, numGS), bestDataY, 10,
+                            cmap="magma", vmin=-5, vmax=15, extend='both')
+        fig2.colorbar(con, ax=pltt)
+        pltt.set_title("Best Fit Model Data")
+        pltt.set_xlabel("X")
+        pltt.set_ylabel("Y")
+
+        fig3, axs = plt.subplots(1, 2)
+        fig3.suptitle('Mogi vs. Surrogate Output for Parameters 64 GPa/m^3, 5m, 10m, 2m in Z direction')
+
+        pltt = axs[0]
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+                            self.groundStations[:, 1].reshape(numGS, numGS),
+                            self.syntheticData[:, 2].reshape(numGS, numGS), 10, vmin=-5, vmax=15, cmap="magma",
+                            extend='both')
+        fig3.colorbar(con, ax=pltt)
+        pltt.set_title("Synthetic Data")
+        pltt.set_xlabel("X")
+        pltt.set_ylabel("Y")
+
+        pltt = axs[1]
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+                            self.groundStations[:, 1].reshape(numGS, numGS), bestDataZ, 10,
+                            cmap="magma", vmin=-5, vmax=15, extend='both')
+        fig3.colorbar(con, ax=pltt)
+        pltt.set_title("Best Fit Model Data")
+        pltt.set_xlabel("X")
+        pltt.set_ylabel("Y")
+
+
+
         plt.show()
 
-    def lossFunction(self, x):
-        # print(x)
-        surrogateMeans = self.gpr.predict(x.reshape(1, -1))
+        #Synthetic Data
+        #Best Fit Model
 
-        rmse = math.sqrt(mean_squared_error(self.syntheticData.reshape(1, -1), surrogateMeans))
-        # print(rmse)
-        # print()
+
+    def lossFunction2(self, x):
+        surrogateMeansX = self.gprX.predict(self.scaler.transform(x.reshape(1, -1)))
+        surrogateMeansY = self.gprY.predict(self.scaler.transform(x.reshape(1, -1)))
+        surrogateMeansZ = self.gprZ.predict(self.scaler.transform(x.reshape(1, -1)))
+
+        rmseX = math.sqrt(mean_squared_error(self.syntheticData[:, 0].reshape(1, -1), surrogateMeansX))
+        rmseY = math.sqrt(mean_squared_error(self.syntheticData[:, 1].reshape(1, -1), surrogateMeansY))
+        rmseZ = math.sqrt(mean_squared_error(self.syntheticData[:, 2].reshape(1, -1), surrogateMeansZ))
+
+        rmse = rmseX + rmseY + rmseZ
+
         return rmse
 
-    def conductOptimization2(self):
+    def conductOptimization3(self):
         self.syntheticData = self.ms.newMogi(self.groundStations, np.array([64, 5, 10, 2]))[:,
                              2]  # vertical displacements
         trainingParams = self.ms.createTraining()
@@ -164,7 +409,7 @@ class LSOptimization:
     # global minimum: strength = 75.5552, source x = 4.9812, source y = 9.9901, source depth = 2.3036 | f(x0) = 0.2931 (1)
     # global minimum: strength = 79.9998, source x = 10.5203, source y = 5.4762, source depth = 3.8920 | f(x0) = 0.0842 (2) w/ at
     # global minimum: strength = 79.9998, source x = 1.7368, source y = 14.2625, source depth = 1.6541 | f(x0) = -20.9072 w/o at
-    def lossFunction2(self, x):
+    def lossFunction3(self, x):
         print(x)
         return self.gpr.predict(x.reshape(1, -1))[0][0]
 
@@ -637,31 +882,63 @@ class LSOptimization:
         return -prob, -grads
 
     def testingMinimize(self):
-        trainingX = np.mgrid[-1:1:100j].reshape(-1, 1)
-        trainingY = 100 * np.sin(15 * trainingX).reshape(-1, 1) + 10 * trainingX.reshape(-1, 1)
-        testingX = np.mgrid[-1:1:100j].reshape(-1, 1)
+        trainingX = np.linspace(-1, 1, 17).reshape(-1, 1)
+        trainingY = 10 * np.sin(15 * trainingX).reshape(-1, 1) + 10 * trainingX.reshape(-1, 1)
+        testingX = np.linspace(-1, 1, 100).reshape(-1, 1)
+
+        # meanY = np.mean(trainingY, axis=0)
+        # stdY = np.std(trainingY)
+        # vertTrainingY = (trainingY - meanY) / stdY
+        #
+        # K = self.gp.kernel3(trainingX, trainingX, 1, 1) + 0.005 * np.eye(len(trainingX))
+        # Ks = self.gp.kernel3(trainingX, testingX, 1, 1)
+        # Kss = self.gp.kernel3(testingX, testingX, 1, 1)
+        #
+        # L = np.linalg.cholesky(K)
+        # alpha = np.matmul(np.linalg.inv(L.T), np.matmul(np.linalg.inv(L), vertTrainingY))
+        # surrogateMeans = np.matmul(Ks.T, alpha)
+        # v = np.matmul(np.linalg.inv(L), Ks)
+        # surrogateStds = np.squeeze(np.diag(Kss - np.matmul(v.T, v)))
+        #
+        # surrogateMeans = surrogateMeans * stdY + meanY
+        # surrogateStds = surrogateStds * stdY #+ meanY
+        # print(surrogateStds)
 
         meanY = np.mean(trainingY, axis=0)
-        stdY = np.mean(trainingY)
+        stdY = np.std(trainingY)
         vertTrainingY = (trainingY - meanY) / stdY
-
+        # vertTrainingY = trainingY
         theta0 = np.array([1.0, 1.0])
         minimum = minimize(self.nll, x0=theta0, args=(trainingX, vertTrainingY), method='L-BFGS-B',
-                           bounds=[(1.0, 2.0), (0.01, 1.0)],
+                           bounds=[(0.1, 2.0), (0.01, 100)],
                            jac=True)  # tau and 4 hyperparam for each param
         hyperparameters = minimum.x
         surrogateMeans, surrogateStds = self.gp.globalGaussianProcessRegression(trainingX, vertTrainingY,
                                                                                 testingX, hyperparameters)
+        print(hyperparameters)
 
         surrogateMeans = surrogateMeans * stdY + meanY
+        surrogateStds = surrogateStds * stdY #+ meanY
+        print(surrogateMeans)
+        print(surrogateStds)
+        #'fixed'
+        #(1e-5,1e5)
+        # kernel = ConstantKernel() * RBF(length_scale=1.0, length_scale_bounds=(1e-5,1e5)) + WhiteKernel(noise_level=1.0, noise_level_bounds=(1e-10,1e5))
+        # self.gpr = GaussianProcessRegressor(kernel=kernel, normalize_y=True, n_restarts_optimizer=100)
+        # self.gpr.fit(trainingX.reshape(-1, 1), trainingY.reshape(-1, 1))
+        # surrogateMeans, surrogateStds = self.gpr.predict(testingX, return_std=True)
+        # print(self.gpr.kernel_)
+        # print(surrogateMeans)
 
         plot = plt.figure(1)
-        plt.plot(trainingX, trainingY, 'b')
+        plt.plot(testingX, 10 * np.sin(15 * testingX).reshape(-1, 1) + 10 * testingX.reshape(-1, 1), 'b')
         plt.plot(testingX, surrogateMeans, 'r')
-        plt.title("Synthetic vs Gaussian for f(x) = 100*sin(5x) + 10x")
+        plot.gca().fill_between(np.squeeze(testingX.reshape(-1, 1)), np.squeeze(surrogateMeans.reshape(-1, 1) - 2.0*surrogateStds.reshape(-1, 1)),
+                                np.squeeze(surrogateMeans.reshape(-1, 1) + 2.0*surrogateStds.reshape(-1, 1)), color="#dddddd")
+        plt.title("Training function f(x) = 10*sin(15x) + 10x vs. Interpolated Gaussian Regression With Optimized Hyperparameters")
         plt.xlabel("x")
         plt.ylabel("f(x)")
-        plt.legend(["Synthetic", "Gaussian Interpolation"])
+        plt.legend(["Training Function", "Gaussian Process Regression Interpolation"])
         plt.show()
 
     def parabola(self, x):
@@ -1096,7 +1373,179 @@ class LSOptimization:
 
         plt.show()
 
+    def InSARMogiInterpolation(self):
+        ascendingSheet = pd.read_excel('noOffset_strongSNR/ascending.xlsx').to_numpy()
+        # self.observedDataAscendingCovar = 5;  # read from excel file
+        descendingSheet = pd.read_excel('noOffset_strongSNR/descending.xlsx').to_numpy()  # read from excel file
+        # self.observedDataDescendingCoVar = 5;  # read from excel file
 
+        self.observedDataAscending = ascendingSheet[:, 3].reshape(-1, 1)
+        self.observedDataDescending = descendingSheet[:, 3].reshape(-1, 1)
+
+        self.groundStations = np.hstack((ascendingSheet[:, 1].reshape(-1, 1), ascendingSheet[:, 2].reshape(-1, 1)))
+        lenGS = len(self.groundStations)
+        numGS = int(math.sqrt(lenGS))
+
+        with open('noOffset_strongSNR/cd_full_asc.txt') as f:
+            lines = [float(line.rstrip()) for line in f]
+        self.covarAscendingInverse = np.linalg.inv(np.asarray(lines).reshape(lenGS, lenGS))
+
+        with open('noOffset_strongSNR/cd_full_desc.txt') as f:
+            lines = [float(line.rstrip()) for line in f]
+        self.covarDescendingInverse = np.linalg.inv(np.asarray(lines).reshape(lenGS, lenGS))
+
+
+        theta = ascendingSheet[0, 4]
+        phi = ascendingSheet[0, 5]
+        Ha = [-np.cos(phi) * np.sin(theta), np.sin(phi) * np.sin(theta), np.cos(theta)]
+
+        theta = descendingSheet[0, 4]
+        phi = descendingSheet[0, 5]
+        Hd = [-np.cos(phi) * np.sin(theta), np.sin(phi) * np.sin(theta), np.cos(theta)]
+
+        bounds = ((2e7, 2e10), (-5000, 5000), (-7000, 0), (1000, 10000))
+        numPoints = 100
+
+        xlimits = np.array([[2e7, 2e10], [-5000, 5000], [-7000, 0], [1000, 10000]])
+        sampling = LHS(xlimits=xlimits)
+        self.trainingX = sampling(numPoints)
+
+        trainingYAscending = np.empty((len(self.trainingX), len(self.groundStations)))
+        trainingYDescending = np.empty((len(self.trainingX), len(self.groundStations)))
+
+        count = 0
+        for param in self.trainingX:
+            displacementsAscending = self.ms.newMogi(self.groundStations, param)
+            LOSval = displacementsAscending[:, 0]*Ha[0] + displacementsAscending[:, 1]*Ha[1] + displacementsAscending[:, 2]*Ha[2]
+            trainingYAscending[count, :] = LOSval
+
+            displacementsDescending = self.ms.newMogi(self.groundStations, param)
+            LOSval = displacementsDescending[:, 0] * Hd[0] + displacementsDescending[:, 1] * Hd[1] + displacementsDescending[:, 2] * Hd[2]
+            trainingYDescending[count, :] = LOSval
+
+            count = count + 1
+
+        self.scaler = StandardScaler().fit(self.trainingX)
+        self.trainingX = self.scaler.transform(self.trainingX)
+
+        kernel = ConstantKernel() * Matern(nu=0.5, length_scale=np.array([0.1, 0.1, 0.1, 0.1]),
+                                           length_scale_bounds=(0.001, 100))
+        self.gprA = GaussianProcessRegressor(kernel=kernel, normalize_y=True, n_restarts_optimizer=30)
+
+        kernel = ConstantKernel() * Matern(nu=0.5, length_scale=np.array([0.1, 0.1, 0.1, 0.1]),
+                                           length_scale_bounds=(0.001, 100))
+        self.gprD = GaussianProcessRegressor(kernel=kernel, normalize_y=True, n_restarts_optimizer=30)
+
+        timestart = timeit.default_timer()
+        self.gprA.fit(self.trainingX, trainingYAscending)
+        self.gprD.fit(self.trainingX, trainingYDescending)
+        timeelaspsed = timeit.default_timer() - timestart
+        print("Time taken to fit: %.4f" % (timeelaspsed))
+
+        # actual values: 64, 5, 10, 2
+        p0 = np.array([1, 1, 1, 1])  # 100, 2, 50, 10
+        minimizer_kwargs = {"bounds": bounds}
+        timestart = timeit.default_timer()
+        result = basinhopping(self.InSARlossFunction, p0, minimizer_kwargs=minimizer_kwargs, stepsize=50, niter=200)
+        timeelaspsed = timeit.default_timer() - timestart
+
+        print("Time taken to run basinhopping: %.4f" % (timeelaspsed))
+        print()
+        print(
+            "global minimum: strength = %.4f, source x = %.4f, source y = %.4f, source depth = %.4f | f(x0) = %.4f" % (
+            result.x[0], result.x[1], result.x[2], result.x[3], result.fun))
+
+        bestDataA = self.gprA.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
+        bestDataD = self.gprD.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
+
+        fig1, axs1 = plt.subplots(1, 2)
+        plt.subplots_adjust(wspace=0.6)
+        fig1.suptitle('Ascending In-SAR Observed vs. Surrogate Displacement Measurements for No Offset Strong SNR')
+
+        pltt = axs1[0]
+        pltt.set_aspect('equal')
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+                            self.groundStations[:, 1].reshape(numGS, numGS), self.observedDataAscending.reshape(numGS, numGS),
+                            150, vmin=-0.03, vmax=0.05, cmap="magma")
+        cbar = fig1.colorbar(con, ax=pltt)
+        cbar.ax.set_ylabel('Displacement', rotation=90)
+        cbar.ax.get_yaxis().labelpad = 10
+        pltt.set_title("Observed")
+        pltt.set_xlabel("X")
+        pltt.set_ylabel("Y")
+
+
+        pltt = axs1[1]
+        pltt.set_aspect('equal')
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+                            self.groundStations[:, 1].reshape(numGS, numGS),
+                            bestDataA,
+                            150, vmin=-0.03, vmax=0.05, cmap="magma")
+        cbar = fig1.colorbar(con, ax=pltt)
+        cbar.ax.set_ylabel('Displacement', rotation=90)
+        cbar.ax.get_yaxis().labelpad = 10
+        pltt.set_title("Surrogate")
+        pltt.set_xlabel("X")
+        pltt.set_ylabel("Y")
+
+        fig2, axs2 = plt.subplots(1, 2)
+        plt.subplots_adjust(wspace=0.6)
+        fig2.suptitle('Descending In-SAR Observed vs. Surrogate Displacement Measurements for No Offset Strong SNR')
+
+        pltt = axs2[0]
+        pltt.set_aspect('equal')
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+                            self.groundStations[:, 1].reshape(numGS, numGS),
+                            self.observedDataDescending.reshape(numGS, numGS),
+                            150, vmin=-0.04, vmax=0.05, cmap="magma")
+        cbar = fig2.colorbar(con, ax=pltt)
+        cbar.ax.set_ylabel('Displacement', rotation=90)
+        cbar.ax.get_yaxis().labelpad = 10
+        pltt.set_title("Observed")
+        pltt.set_xlabel("X")
+        pltt.set_ylabel("Y")
+
+        pltt = axs2[1]
+        pltt.set_aspect('equal')
+        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+                            self.groundStations[:, 1].reshape(numGS, numGS),
+                            bestDataD,
+                            150, vmin=-0.04, vmax=0.05, cmap="magma")
+        cbar = fig2.colorbar(con, ax=pltt)
+        cbar.ax.set_ylabel('Displacement', rotation=90)
+        cbar.ax.get_yaxis().labelpad = 10
+        pltt.set_title("Surrogate")
+        pltt.set_xlabel("X")
+        pltt.set_ylabel("Y")
+
+        plt.show()
+
+        # Synthetic Data
+        # Best Fit Model
+
+        # plot = plt.figure(1)
+        # plt.plot(self.groundStations[:19, 1], self.syntheticData[:19].reshape(-1), 'r')
+        # plt.plot(self.groundStations[:19, 1], self.gpr.predict(result.x.reshape(1, -1))[0, :19], 'b')
+        # plt.xlabel("Y")
+        # plt.ylabel("Vertical Displacement")
+        # plt.title("Synthetic vs Surrogate Output along x=1")
+        # plt.legend(["Synthetic", "Surrogate"])
+        # plt.show()
+
+    def InSARlossFunction(self, x):
+        surrogateMeansA = self.gprA.predict(self.scaler.transform(x.reshape(1, -1))).reshape(-1, 1)
+        aDifference = self.observedDataAscending - surrogateMeansA
+        rmseA = np.dot(np.dot(aDifference.T, self.covarAscendingInverse), aDifference)
+
+        surrogateMeansD = self.gprD.predict(self.scaler.transform(x.reshape(1, -1))).reshape(-1, 1)
+        dDifference = self.observedDataDescending - surrogateMeansD
+        rmseD = np.dot(np.dot(dDifference.T, self.covarDescendingInverse), dDifference)
+
+
+        rmse = rmseA+rmseD
+        rmse = rmse[0][0]
+
+        return rmse
 
 
 
@@ -1105,6 +1554,8 @@ class LSOptimization:
 if __name__ == '__main__':
     ls = LSOptimization()
     # ls.conductOptimization()
+    ls.InSARMogiInterpolation()
+    # ls.conductOptimization2()
     # ls.testingMinimize()
     # ls.testGP()
     # ls.optimizationLoop2()
@@ -1112,7 +1563,7 @@ if __name__ == '__main__':
     # ls.optimizationLoop1DTest()
     # ls.optimizationArticle()
     # ls.checkGaussian()
-    ls.spaceInterpolationComparison()
+    # ls.spaceInterpolationComparison()
 
 # if(x[0] > 60 and x[0] < 65 and x[1] > 4.8 and x[1] < 5.2 and x[2] > 9.8 and x[2] < 10.2 and x[3] > 1.5 and x[3] < 2.5):
 #     print(rmse)

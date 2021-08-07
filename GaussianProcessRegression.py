@@ -32,7 +32,7 @@ class GP:
     """
     def kernel3(self, x, y, tau, sigma):
         sqdist = np.sum(x ** 2, 1).reshape(-1, 1) + np.sum(y ** 2, 1) - 2 * np.dot(x, y.T) #sum squares row wise and create (3x1) vectors, add to third term
-        return tau*np.exp(-.5 * (1.0/(sigma*2)) * sqdist)
+        return tau*np.exp(-.5 * (1.0/(sigma)) * sqdist)
 
     def kernel(self, x, y, hyperparams):
         tau = hyperparams[0]
@@ -78,7 +78,7 @@ class GP:
     @return: mean (vector/matrix) and standard deviation vector of each testing point's output
     """
     def globalGaussianProcessRegression(self, trainingX, trainingY, testingX, hyperparams):
-        K = self.kernel(trainingX, trainingX, hyperparams) + 0.00005 * np.eye(len(trainingX))
+        K = self.kernel(trainingX, trainingX, hyperparams) + 0.005 * np.eye(len(trainingX))
         Ks = self.kernel(trainingX, testingX, hyperparams)
         Kss = self.kernel(testingX, testingX, hyperparams)
 
@@ -141,7 +141,7 @@ class GP:
 
     def conductRegression(self, nTraining, nTestingLinear, tau, sigma):
         trainingX = 20 * (np.random.rand(nTraining, 2)) - 10  # nTrainingx2 random points from -10 to 10
-        trainingY = 5*np.sin(trainingX[:, 0]) + 3*np.sin(trainingX[:, 1])
+        trainingY = np.sin(trainingX[:, 0]) + 3*np.cos(trainingX[:, 1])
         testingX = np.mgrid[-10:10:nTestingLinear, -10:10:nTestingLinear].reshape(2, -1).T
 
         # mean = np.mean(trainingY)
@@ -149,7 +149,7 @@ class GP:
         # trainingY = trainingY - mean
 
         X, Y = np.mgrid[-10:10:nTestingLinear, -10:10:nTestingLinear]
-        Z = np.sin(X) + 3*np.sin(Y)
+        Z = np.sin(X) + 3*np.cos(Y)
 
         K = self.kernel4(trainingX, trainingX, tau, sigma) + 0.00005 * np.eye(len(trainingX))
         Ks = self.kernel4(trainingX, testingX, tau, sigma)
@@ -190,18 +190,18 @@ class GP:
         trainingX, trainingY, testingX, muVector, stdVector, X, Y, Z = self.conductRegression(nTraining, nTestingLinear, tau, sigma)
 
         ax1.plot(np.squeeze(testingX[:nTesting, 1].transpose()), np.squeeze(muVector[:nTesting].transpose()), c='r', linestyle='-') #mean points
-        ax1.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0]) + 3*np.sin(testingX[:nTesting, 1]), 'k--', lw=1) #actual function
+        ax1.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0]) + 3*np.cos(testingX[:nTesting, 1]), 'k--', lw=1) #actual function
         ax1.fill_between(np.squeeze(testingX[:nTesting, 1].transpose()),
                               np.squeeze(muVector[:nTesting] - 2.0 * stdVector[:nTesting]),
                               np.squeeze(muVector[:nTesting] + 2.0 * stdVector[:nTesting]), color="#dddddd") #uncertainty
         ax1.set_xlabel("x2")
         ax1.set_ylabel("y")
         ax1.title.set_text('10 Training Points')
-        ax1.axis([-10, 10, -3, 3])
+        ax1.axis([-10, 10, -4.5, 4.5])
 
         ax4.plot(np.squeeze(testingX[25::50, 0].transpose()), np.squeeze(muVector[25::50].transpose()), c='r',
                   linestyle='-')  # mean points
-        ax4.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0]) + 3*np.sin(testingX[25::50, 1]), 'k--',
+        ax4.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0]) + 3*np.cos(testingX[25::50, 1]), 'k--',
                  lw=1)  # actual function
         ax4.fill_between(np.squeeze(testingX[25::50, 0].transpose()),
                          np.squeeze(muVector[25::50] - 2.0 * stdVector[25::50]),
@@ -209,7 +209,7 @@ class GP:
         ax4.set_xlabel("x1")
         ax4.set_ylabel("y")
         ax4.title.set_text('10 Training Points')
-        ax4.axis([-10, 10, -3, 3])
+        ax4.axis([-10, 10, -4.5, 4.5])
 
 
         nTraining = 100
@@ -217,7 +217,7 @@ class GP:
                                                                                        sigma)
         ax2.plot(np.squeeze(testingX[:nTesting, 1].transpose()), np.squeeze(muVector[:nTesting].transpose()), c='r',
                   linestyle='-')  # mean points
-        ax2.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0]) + 3*np.sin(testingX[:nTesting, 1]), 'k--',
+        ax2.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0]) + 3*np.cos(testingX[:nTesting, 1]), 'k--',
                  lw=1)  # actual function
         ax2.fill_between(np.squeeze(testingX[:nTesting, 1].transpose()),
                                np.squeeze(muVector[:nTesting] - 2.0 * stdVector[:nTesting]),
@@ -225,11 +225,11 @@ class GP:
         ax2.set_xlabel("x2")
         ax2.set_ylabel("y")
         ax2.title.set_text('100 Training Points')
-        ax2.axis([-10, 10, -3, 3])
+        ax2.axis([-10, 10, -4.5, 4.5])
 
         ax5.plot(np.squeeze(testingX[25::50, 0].transpose()), np.squeeze(muVector[25::50].transpose()), c='r',
                   linestyle='-')  # mean points
-        ax5.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0]) + 3*np.sin(testingX[25::50, 1]), 'k--',
+        ax5.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0]) + 3*np.cos(testingX[25::50, 1]), 'k--',
                  lw=1)  # actual function
         ax5.fill_between(np.squeeze(testingX[25::50, 0].transpose()),
                          np.squeeze(muVector[25::50] - 2.0 * stdVector[25::50]),
@@ -237,14 +237,14 @@ class GP:
         ax5.set_xlabel("x1")
         ax5.set_ylabel("y")
         ax5.title.set_text('100 Training Points')
-        ax5.axis([-10, 10, -3, 3])
+        ax5.axis([-10, 10, -4.5, 4.5])
 
         nTraining = 1000
         trainingX, trainingY, testingX, muVector, stdVector, X, Y, Z = self.conductRegression(nTraining, nTestingLinear, tau,
                                                                                        sigma)
         ax3.plot(np.squeeze(testingX[:nTesting, 1].transpose()), np.squeeze(muVector[:nTesting].transpose()), c='r',
                   linestyle='-')  # mean points
-        ax3.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0]) + 3*np.sin(testingX[:nTesting, 1]), 'k--',
+        ax3.plot(testingX[:nTesting, 1], np.sin(testingX[:nTesting, 0]) + 3*np.cos(testingX[:nTesting, 1]), 'k--',
                  lw=1)  # actual function
         ax3.fill_between(np.squeeze(testingX[:nTesting, 1].transpose()),
                                np.squeeze(muVector[:nTesting] - 2.0 * stdVector[:nTesting]),
@@ -252,11 +252,11 @@ class GP:
         ax3.set_xlabel("x2")
         ax3.set_ylabel("y")
         ax3.title.set_text('1000 Training Points')
-        ax3.axis([-10, 10, -3, 3])
+        ax3.axis([-10, 10, -4.5, 4.5])
 
         ax6.plot(np.squeeze(testingX[25::50, 0].transpose()), np.squeeze(muVector[25::50].transpose()), c='r',
                   linestyle='-')  # mean points
-        ax6.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0]) + 3*np.sin(testingX[25::50, 1]), 'k--',
+        ax6.plot(testingX[25::50, 0], np.sin(testingX[25::50, 0]) + 3*np.cos(testingX[25::50, 1]), 'k--',
                  lw=1)  # actual function
         ax6.fill_between(np.squeeze(testingX[25::50, 0].transpose()),
                          np.squeeze(muVector[25::50] - 2.0 * stdVector[25::50]),
@@ -264,7 +264,7 @@ class GP:
         ax6.set_xlabel("x1")
         ax6.set_ylabel("y")
         ax6.title.set_text('1000 Training Points')
-        ax6.axis([-10, 10, -3, 3])
+        ax6.axis([-10, 10, -4.5, 4.5])
 
         # pl.figure(1)
         # # vals = np.argwhere(trainingX[:, 0]<-9)
@@ -278,32 +278,50 @@ class GP:
         # pl.title('Gaussian Regression with x1=-10')
         # pl.show()
 
-        nTraining = 700
+        nTraining = 500
+        nTestingLinear = 30j
         trainingX, trainingY, testingX, muVector, stdVector, X, Y, Z = self.conductRegression(nTraining, nTestingLinear, tau,
                                                                                        sigma)
         plot3 = plt.figure(3)
         ax = plot3.add_subplot(projection="3d")
         ax.set_xlim(-11, 11)
         ax.set_ylim(-11, 11)
-        ax.set_zlim(-3, 3)
+        ax.set_zlim(-4.5, 4.5)
         ax.set_xlabel("x1")
         ax.set_ylabel("x2")
         ax.set_zlabel("y")
         #ax.scatter3D(trainingX[:, 0], trainingX[:, 1], trainingY, c='b')
-        surf = ax.plot_surface(X, Y, Z, cmap='Greys')
+        surf = ax.plot_surface(X, Y, Z, color="black")
         ax.scatter3D(testingX[:, 0], testingX[:, 1], muVector, c='r', marker='.')
         plt.title('Gaussian Regression Multiple Input Parameters')
 
         plt.show()
 
+    def conductSimpleRegression(self):
+        trainingX = np.array([1.0])
+        trainingY = 5 * np.sin(trainingX) + 3
+        testingX = np.linspace(-10, 10, 100)
+        tau = 1.0
+        sigma = 1.0
 
+        K = self.kernel4(trainingX, trainingX, tau, sigma) + 0.00005 * np.eye(len(trainingX))
+        Ks = self.kernel4(trainingX, testingX, tau, sigma)
+        Kss = self.kernel4(testingX, testingX, tau, sigma)
+
+        L = np.linalg.cholesky(K)
+        alpha = np.matmul(np.linalg.inv(L.T), np.matmul(np.linalg.inv(L), trainingY))
+        muVector = np.matmul(Ks.T, alpha)
+        v = np.matmul(np.linalg.inv(L), Ks)
+        stdVector = np.squeeze(np.diag(Kss - np.matmul(v.T, v)))
+
+        return trainingX, trainingY, testingX, muVector, stdVector
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     gp = GP()
-    #gp.gaussianProcess()
+    gp.gaussianProcess()
     #gp.exponential2DTest()
-    gp.conductOptimization()
+    # gp.conductOptimization()
 
     # See PyCharm help at https://www.jetbrains.com/help/pycharm/
 
