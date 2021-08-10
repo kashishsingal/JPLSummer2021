@@ -5,6 +5,7 @@ only functions kernel() and globalGaussianProcessRegression() are to be used for
 
 author: Kashish Singal (NASA JPL)
 """
+import math
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -34,6 +35,18 @@ class MogiSim:
 
     def __init__(self):
         pass
+
+    def MogiWithDv(self, xyLocations, params):  # coordinates are strength, x, y, and magnitude of cavity depth
+        displacements = np.empty((len(xyLocations), 3))  # initialize displacements array
+        coordinates = np.empty((len(xyLocations), 4))
+        coordinates[:, 0] = np.full((len(xyLocations)), 10**params[0])
+        coordinates[:, 1] = xyLocations[:, 0] - params[1]
+        coordinates[:, 2] = xyLocations[:, 1] - params[2]
+        coordinates[:, 3] = np.full((len(xyLocations)), 10**params[3])
+        Rvect = LA.norm(coordinates[:, 1:4], axis = 1).T
+        magVect = coordinates[:, 0] * (1 - self.poisson) / math.pi /(np.power(Rvect, 3))
+        displacements = (coordinates[:, 1:4].T*magVect).T
+        return displacements
 
     def newMogi(self, xyLocations, params):  # coordinates are strength, x, y, and magnitude of cavity depth
         displacements = np.empty((len(xyLocations), 3))  # initialize displacements array

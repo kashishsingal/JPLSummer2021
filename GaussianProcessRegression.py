@@ -298,15 +298,15 @@ class GP:
         plt.show()
 
     def conductSimpleRegression(self):
-        trainingX = np.array([1.0])
+        trainingX = np.array([-9, -5, -3, 2, 3, 4, 7]).reshape(-1, 1)
         trainingY = 5 * np.sin(trainingX) + 3
-        testingX = np.linspace(-10, 10, 100)
+        testingX = np.linspace(-10, 10, 100).reshape(-1, 1)
         tau = 1.0
         sigma = 1.0
 
-        K = self.kernel4(trainingX, trainingX, tau, sigma) + 0.00005 * np.eye(len(trainingX))
-        Ks = self.kernel4(trainingX, testingX, tau, sigma)
-        Kss = self.kernel4(testingX, testingX, tau, sigma)
+        K = self.kernel3(trainingX, trainingX, tau, sigma) + 0.00005 * np.eye(len(trainingX))
+        Ks = self.kernel3(trainingX, testingX, tau, sigma)
+        Kss = self.kernel3(testingX, testingX, tau, sigma)
 
         L = np.linalg.cholesky(K)
         alpha = np.matmul(np.linalg.inv(L.T), np.matmul(np.linalg.inv(L), trainingY))
@@ -314,12 +314,26 @@ class GP:
         v = np.matmul(np.linalg.inv(L), Ks)
         stdVector = np.squeeze(np.diag(Kss - np.matmul(v.T, v)))
 
-        return trainingX, trainingY, testingX, muVector, stdVector
+        plot1 = plt.figure(1)
+        plt.plot(trainingX, trainingY, 'bs', ms=8)
+        plt.plot(np.squeeze(testingX.transpose()), np.squeeze(muVector.transpose()), 'r--', lw=1)
+        plt.plot(testingX, 5*np.sin(testingX) + 3, 'k-', lw=1)
+        plt.gca().fill_between(np.squeeze(testingX.T), np.squeeze(muVector.T - 2.0 * stdVector),
+                               np.squeeze(muVector.T + 2.0 * stdVector), color="#dddddd")
+        plt.axis([-10, 10, -4, 10])
+        plt.title('Gaussian Regression for f(x) = 5*sin(x)+3')
+        plt.legend(["Training Points", "Testing Points", "Training Function"])
+        plt.xlabel("X")
+        plt.ylabel("Y")
+        plt.show()
+
+
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     gp = GP()
-    gp.gaussianProcess()
+    # gp.gaussianProcess()
+    gp.conductSimpleRegression()
     #gp.exponential2DTest()
     # gp.conductOptimization()
 

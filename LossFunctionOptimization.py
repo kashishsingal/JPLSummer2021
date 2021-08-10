@@ -1382,6 +1382,9 @@ class LSOptimization:
         self.observedDataAscending = ascendingSheet[:, 3].reshape(-1, 1)
         self.observedDataDescending = descendingSheet[:, 3].reshape(-1, 1)
 
+        self.trueObservedAscending = ascendingSheet[:, 6].reshape(-1, 1)
+        self.trueObservedDescending = descendingSheet[:, 6].reshape(-1, 1)
+
         self.groundStations = np.hstack((ascendingSheet[:, 1].reshape(-1, 1), ascendingSheet[:, 2].reshape(-1, 1)))
         lenGS = len(self.groundStations)
         numGS = int(math.sqrt(lenGS))
@@ -1403,10 +1406,12 @@ class LSOptimization:
         phi = descendingSheet[0, 5]
         Hd = [-np.cos(phi) * np.sin(theta), np.sin(phi) * np.sin(theta), np.cos(theta)]
 
-        bounds = ((2e7, 2e10), (-5000, 5000), (-7000, 0), (1000, 10000))
-        numPoints = 100
+        # bounds = ((5e5, 5e7), (-5000, 5000), (-7000, 0), (1000, 10000))
+        bounds = ((math.log10(5e5), math.log10(5e7)), (-4000, 2500), (-5300, 300), (math.log10(1000), math.log10(10000)))
+        print(bounds)
+        numPoints = 60
 
-        xlimits = np.array([[2e7, 2e10], [-5000, 5000], [-7000, 0], [1000, 10000]])
+        xlimits = np.array([[math.log10(5e5), math.log10(5e7)], [-4000, 2500], [-5300, 300], [math.log10(1000), math.log10(10000)]])
         sampling = LHS(xlimits=xlimits)
         self.trainingX = sampling(numPoints)
 
@@ -1415,11 +1420,11 @@ class LSOptimization:
 
         count = 0
         for param in self.trainingX:
-            displacementsAscending = self.ms.newMogi(self.groundStations, param)
+            displacementsAscending = self.ms.MogiWithDv(self.groundStations, param)
             LOSval = displacementsAscending[:, 0]*Ha[0] + displacementsAscending[:, 1]*Ha[1] + displacementsAscending[:, 2]*Ha[2]
             trainingYAscending[count, :] = LOSval
 
-            displacementsDescending = self.ms.newMogi(self.groundStations, param)
+            displacementsDescending = self.ms.MogiWithDv(self.groundStations, param)
             LOSval = displacementsDescending[:, 0] * Hd[0] + displacementsDescending[:, 1] * Hd[1] + displacementsDescending[:, 2] * Hd[2]
             trainingYDescending[count, :] = LOSval
 
@@ -1438,9 +1443,12 @@ class LSOptimization:
 
         timestart = timeit.default_timer()
         self.gprA.fit(self.trainingX, trainingYAscending)
+        timeelaspsed = timeit.default_timer() - timestart
+        print("Time taken to fit Ascending Data: %.4f" % (timeelaspsed))
+        timestart = timeit.default_timer()
         self.gprD.fit(self.trainingX, trainingYDescending)
         timeelaspsed = timeit.default_timer() - timestart
-        print("Time taken to fit: %.4f" % (timeelaspsed))
+        print("Time taken to fit Descending Data: %.4f" % (timeelaspsed))
 
         # actual values: 64, 5, 10, 2
         p0 = np.array([1, 1, 1, 1])  # 100, 2, 50, 10
@@ -1452,73 +1460,137 @@ class LSOptimization:
         print("Time taken to run basinhopping: %.4f" % (timeelaspsed))
         print()
         print(
-            "global minimum: strength = %.4f, source x = %.4f, source y = %.4f, source depth = %.4f | f(x0) = %.4f" % (
-            result.x[0], result.x[1], result.x[2], result.x[3], result.fun))
+            "global minimum: dV = %.4f, source x = %.4f, source y = %.4f, source depth = %.4f | f(x0) = %.4f" % (
+            10**result.x[0], result.x[1], result.x[2], 10**result.x[3], result.fun))
 
-        bestDataA = self.gprA.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
-        bestDataD = self.gprD.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
-
-        fig1, axs1 = plt.subplots(1, 2)
-        plt.subplots_adjust(wspace=0.6)
-        fig1.suptitle('Ascending In-SAR Observed vs. Surrogate Displacement Measurements for No Offset Strong SNR')
-
-        pltt = axs1[0]
-        pltt.set_aspect('equal')
-        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
-                            self.groundStations[:, 1].reshape(numGS, numGS), self.observedDataAscending.reshape(numGS, numGS),
-                            150, vmin=-0.03, vmax=0.05, cmap="magma")
-        cbar = fig1.colorbar(con, ax=pltt)
-        cbar.ax.set_ylabel('Displacement', rotation=90)
-        cbar.ax.get_yaxis().labelpad = 10
-        pltt.set_title("Observed")
-        pltt.set_xlabel("X")
-        pltt.set_ylabel("Y")
-
-
-        pltt = axs1[1]
-        pltt.set_aspect('equal')
-        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
-                            self.groundStations[:, 1].reshape(numGS, numGS),
-                            bestDataA,
-                            150, vmin=-0.03, vmax=0.05, cmap="magma")
-        cbar = fig1.colorbar(con, ax=pltt)
-        cbar.ax.set_ylabel('Displacement', rotation=90)
-        cbar.ax.get_yaxis().labelpad = 10
-        pltt.set_title("Surrogate")
-        pltt.set_xlabel("X")
-        pltt.set_ylabel("Y")
-
-        fig2, axs2 = plt.subplots(1, 2)
-        plt.subplots_adjust(wspace=0.6)
-        fig2.suptitle('Descending In-SAR Observed vs. Surrogate Displacement Measurements for No Offset Strong SNR')
-
-        pltt = axs2[0]
-        pltt.set_aspect('equal')
-        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
-                            self.groundStations[:, 1].reshape(numGS, numGS),
-                            self.observedDataDescending.reshape(numGS, numGS),
-                            150, vmin=-0.04, vmax=0.05, cmap="magma")
-        cbar = fig2.colorbar(con, ax=pltt)
-        cbar.ax.set_ylabel('Displacement', rotation=90)
-        cbar.ax.get_yaxis().labelpad = 10
-        pltt.set_title("Observed")
-        pltt.set_xlabel("X")
-        pltt.set_ylabel("Y")
-
-        pltt = axs2[1]
-        pltt.set_aspect('equal')
-        con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
-                            self.groundStations[:, 1].reshape(numGS, numGS),
-                            bestDataD,
-                            150, vmin=-0.04, vmax=0.05, cmap="magma")
-        cbar = fig2.colorbar(con, ax=pltt)
-        cbar.ax.set_ylabel('Displacement', rotation=90)
-        cbar.ax.get_yaxis().labelpad = 10
-        pltt.set_title("Surrogate")
-        pltt.set_xlabel("X")
-        pltt.set_ylabel("Y")
-
-        plt.show()
+        # bestDataA = self.gprA.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
+        # bestDataD = self.gprD.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
+        #
+        # fig1, axs1 = plt.subplots(2, 2)
+        # plt.subplots_adjust(wspace=0.6, hspace=0.4)
+        # fig1.suptitle('Ascending In-SAR Observed vs. Surrogate Displacement Measurements for No Offset Strong SNR')
+        #
+        # pltt = axs1[0, 0]
+        # pltt.set_aspect('equal')
+        # con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+        #                     self.groundStations[:, 1].reshape(numGS, numGS),
+        #                     self.trueObservedAscending.reshape(numGS, numGS),
+        #                     150, vmin=np.min(self.observedDataAscending), vmax=np.max(self.observedDataAscending),
+        #                     cmap="jet")
+        # cbar = fig1.colorbar(con, ax=pltt)
+        # cbar.ax.set_ylabel('Displacement', rotation=90)
+        # cbar.ax.get_yaxis().labelpad = 10
+        # pltt.set_title("Truth (m)")
+        # pltt.set_xlabel("X")
+        # pltt.set_ylabel("Y")
+        #
+        # pltt = axs1[0, 1]
+        # pltt.set_aspect('equal')
+        # con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+        #                     self.groundStations[:, 1].reshape(numGS, numGS),
+        #                     self.observedDataAscending.reshape(numGS, numGS),
+        #                     150, vmin=np.min(self.observedDataAscending), vmax=np.max(self.observedDataAscending),
+        #                     cmap="jet")
+        # cbar = fig1.colorbar(con, ax=pltt)
+        # cbar.ax.set_ylabel('Displacement', rotation=90)
+        # cbar.ax.get_yaxis().labelpad = 10
+        # pltt.set_title("Data (m)")
+        # pltt.set_xlabel("X")
+        # pltt.set_ylabel("Y")
+        #
+        # pltt = axs1[1, 0]
+        # pltt.set_aspect('equal')
+        # con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+        #                     self.groundStations[:, 1].reshape(numGS, numGS),
+        #                     bestDataA,
+        #                     150, vmin=np.min(self.observedDataAscending), vmax=np.max(self.observedDataAscending),
+        #                     cmap="jet")
+        # cbar = fig1.colorbar(con, ax=pltt)
+        # cbar.ax.set_ylabel('Displacement', rotation=90)
+        # cbar.ax.get_yaxis().labelpad = 10
+        # pltt.set_title("Surrogate (m)")
+        # pltt.set_xlabel("X")
+        # pltt.set_ylabel("Y")
+        #
+        # pltt = axs1[1, 1]
+        # pltt.set_aspect('equal')
+        # con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+        #                     self.groundStations[:, 1].reshape(numGS, numGS),
+        #                     self.observedDataAscending.reshape(numGS, numGS) - bestDataA,
+        #                     150, vmin=np.min(self.observedDataAscending.reshape(numGS, numGS) - bestDataA), vmax=np.max(self.observedDataAscending.reshape(numGS, numGS) - bestDataA),
+        #                     cmap="jet")
+        # cbar = fig1.colorbar(con, ax=pltt)
+        # cbar.ax.set_ylabel('Displacement', rotation=90)
+        # cbar.ax.get_yaxis().labelpad = 10
+        # pltt.set_title("Data Minus Surrogate (m)")
+        # pltt.set_xlabel("X")
+        # pltt.set_ylabel("Y")
+        #
+        # fig2, axs2 = plt.subplots(2, 2)
+        # plt.subplots_adjust(wspace=0.6, hspace=0.4)
+        # fig2.suptitle('Descending In-SAR Observed vs. Surrogate Displacement Measurements for No Offset Strong SNR')
+        #
+        # pltt = axs2[0, 0]
+        # pltt.set_aspect('equal')
+        # con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+        #                     self.groundStations[:, 1].reshape(numGS, numGS),
+        #                     self.trueObservedDescending.reshape(numGS, numGS),
+        #                     150, vmin=np.min(self.observedDataDescending),
+        #                     vmax=np.max(self.observedDataDescending),
+        #                     cmap="jet")
+        # cbar = fig2.colorbar(con, ax=pltt)
+        # cbar.ax.set_ylabel('Displacement', rotation=90)
+        # cbar.ax.get_yaxis().labelpad = 10
+        # pltt.set_title("Truth (m)")
+        # pltt.set_xlabel("X")
+        # pltt.set_ylabel("Y")
+        #
+        # pltt = axs2[0, 1]
+        # pltt.set_aspect('equal')
+        # con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+        #                     self.groundStations[:, 1].reshape(numGS, numGS),
+        #                     self.observedDataDescending.reshape(numGS, numGS),
+        #                     150, vmin=np.min(self.observedDataDescending),
+        #                     vmax=np.max(self.observedDataDescending),
+        #                     cmap="jet")
+        # cbar = fig2.colorbar(con, ax=pltt)
+        # cbar.ax.set_ylabel('Displacement', rotation=90)
+        # cbar.ax.get_yaxis().labelpad = 10
+        # pltt.set_title("Data (m)")
+        # pltt.set_xlabel("X")
+        # pltt.set_ylabel("Y")
+        #
+        # pltt = axs2[1, 0]
+        # pltt.set_aspect('equal')
+        # con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+        #                     self.groundStations[:, 1].reshape(numGS, numGS),
+        #                     bestDataD,
+        #                     150, vmin=np.min(self.observedDataDescending),
+        #                     vmax=np.max(self.observedDataDescending),
+        #                     cmap="jet")
+        # cbar = fig2.colorbar(con, ax=pltt)
+        # cbar.ax.set_ylabel('Displacement', rotation=90)
+        # cbar.ax.get_yaxis().labelpad = 10
+        # pltt.set_title("Surrogate (m)")
+        # pltt.set_xlabel("X")
+        # pltt.set_ylabel("Y")
+        #
+        # pltt = axs2[1, 1]
+        # pltt.set_aspect('equal')
+        # con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
+        #                     self.groundStations[:, 1].reshape(numGS, numGS),
+        #                     self.observedDataDescending.reshape(numGS, numGS) - bestDataD,
+        #                     150, vmin=np.min(self.observedDataDescending.reshape(numGS, numGS) - bestDataD),
+        #                     vmax=np.max(self.observedDataDescending.reshape(numGS, numGS) - bestDataD),
+        #                     cmap="jet")
+        # cbar = fig2.colorbar(con, ax=pltt)
+        # cbar.ax.set_ylabel('Displacement', rotation=90)
+        # cbar.ax.get_yaxis().labelpad = 10
+        # pltt.set_title("Data Minus Surrogate (m)")
+        # pltt.set_xlabel("X")
+        # pltt.set_ylabel("Y")
+        #
+        # plt.show()
 
         # Synthetic Data
         # Best Fit Model
@@ -1541,7 +1613,7 @@ class LSOptimization:
         dDifference = self.observedDataDescending - surrogateMeansD
         rmseD = np.dot(np.dot(dDifference.T, self.covarDescendingInverse), dDifference)
 
-
+        print(x)
         rmse = rmseA+rmseD
         rmse = rmse[0][0]
 
