@@ -37,6 +37,7 @@ class Main:
     trainingX = None
     poisson = 0.25
     shearModulus = 1
+    syntheticData = None
 
     def __init__(self):
         pass
@@ -142,7 +143,7 @@ class Main:
         pltt = axs[0]
         con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
                             self.groundStations[:, 1].reshape(numGS, numGS), self.syntheticData[:, 0].reshape(numGS, numGS),
-                            10, vmin=-5, vmax=15, cmap="magma", extend='both')
+                            150, vmin=-5, vmax=15, cmap="magma", extend='both')
         fig1.colorbar(con, ax=pltt)
         pltt.set_title("Synthetic Data")
         pltt.set_xlabel("X")
@@ -150,7 +151,7 @@ class Main:
 
         pltt = axs[1]
         con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
-                            self.groundStations[:, 1].reshape(numGS, numGS), bestDataX, 10,
+                            self.groundStations[:, 1].reshape(numGS, numGS), bestDataX, 150,
                             cmap="magma", vmin=-5, vmax=15, extend='both')
         fig1.colorbar(con, ax=pltt)
         pltt.set_title("Best Fit Model Data")
@@ -163,7 +164,7 @@ class Main:
         pltt = axs[0]
         con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS),
                             self.groundStations[:, 1].reshape(numGS, numGS),
-                            self.syntheticData[:, 1].reshape(numGS, numGS), 10, vmin=-5, vmax=15, cmap="magma",
+                            self.syntheticData[:, 1].reshape(numGS, numGS), 150, vmin=-5, vmax=15, cmap="magma",
                             extend='both')
         fig2.colorbar(con, ax=pltt)
         pltt.set_title("Synthetic Data")
@@ -258,11 +259,11 @@ class Main:
         Hd = [-np.cos(phi) * np.sin(theta), np.sin(phi) * np.sin(theta), np.cos(theta)]
 
         #bounds of parameter space
-        bounds = ((math.log10(5e5), math.log10(5e7)), (-4000, 2500), (-5300, 300), (math.log10(1000), math.log10(10000)))
+        bounds = ((math.log10(5e5), math.log10(5e7)), (-4, 2.5), (-5.3, 0.3), (math.log10(1000), math.log10(10000)))
         print(bounds)
-        numPoints = 250 #number of training points
+        numPoints = 200 #number of training points
 
-        xlimits = np.array([[math.log10(5e5), math.log10(5e7)], [-4000, 2500], [-5300, 300], [math.log10(1000), math.log10(10000)]])
+        xlimits = np.array([[math.log10(5e5), math.log10(5e7)], [-4, 2.5], [-5.3, 0.3], [math.log10(1000), math.log10(10000)]])
         sampling = LHS(xlimits=xlimits)
         self.trainingX = sampling(numPoints) #generate training data from sampling
 
@@ -282,6 +283,13 @@ class Main:
             trainingYDescending[count, :] = LOSval
 
             count = count + 1
+
+        param = [math.log10(10e6), 500, -2000, math.log10(5000)]
+        # displacementt = self.MogiWithDv(self.groundStations, param)
+        # self.observedDataAscending = displacementt[:, 0 ] *Ha[0] + displacementt[:, 1 ] *Ha[1] + displacementt[:, 2 ] *Ha[2]
+        # self.observedDataAscending = self.observedDataAscending.reshape(-1, 1)
+        # self.observedDataDescending = displacementt[:, 0] * Hd[0] + displacementt[:, 1] * Hd[1] + displacementt[:, 2] * Hd[2]
+        # self.observedDataDescending = self.observedDataDescending.reshape(-1, 1)
 
         #scale input for training points
         self.scaler = StandardScaler().fit(self.trainingX)
@@ -310,14 +318,14 @@ class Main:
         p0 = np.array([1, 1, 1, 1])  # actual values: 64, 5, 10, 2
         minimizer_kwargs = {"bounds": bounds}
         timestart = timeit.default_timer()
-        result = basinhopping(self.InSARlossFunction, p0, minimizer_kwargs=minimizer_kwargs, stepsize=50, niter=200)
+        result = basinhopping(self.InSARlossFunction, p0, minimizer_kwargs=minimizer_kwargs, stepsize=0.5, niter=200)
         timeelaspsed = timeit.default_timer() - timestart
 
         print("Time taken to run basinhopping: %.4f" % (timeelaspsed))
         print()
         print(
             "global minimum: dV = %.4f, source x = %.4f, source y = %.4f, source depth = %.4f | f(x0) = %.4f" % (
-                10**result.x[0], result.x[1], result.x[2], 10**result.x[3], result.fun))
+                10**result.x[0], 1000*result.x[1], 1000*result.x[2], 10**result.x[3], result.fun))
 
         #data interpolated by results from stochastic minimization algorithm
         bestDataA = self.gprA.predict(self.scaler.transform(result.x.reshape(1, -1))).reshape(numGS, numGS)
@@ -486,7 +494,7 @@ class Main:
     Calculates Mogi displacements using magnitude of dV/pi instead of alpha^3*deltaP
     
     @:param xyLocations -- n x 2 matrix containing x and y locations of n ground stations
-    @:param params -- log10(dV), source x, source y, and log10(source depth) vector for which displacements at ground stations should be calculated
+    @:param params -- log10(dV), 1000*source x, 1000*source y, and log10(source depth) vector for which displacements at ground stations should be calculated
     
     @:return a nx3 matrix of displacements in x, y, and z directions for n ground stations
     """
@@ -495,8 +503,8 @@ class Main:
         displacements = np.empty((len(xyLocations), 3))  # initialize displacements array
         coordinates = np.empty((len(xyLocations), 4))
         coordinates[:, 0] = np.full((len(xyLocations)), 10**params[0]) #initialize first column of coordinates with dV
-        coordinates[:, 1] = xyLocations[:, 0] - params[1] #initialize second column of coordinates with x difference between GSs and source
-        coordinates[:, 2] = xyLocations[:, 1] - params[2] #initialize second column of coordinates with y difference between GSs and source
+        coordinates[:, 1] = xyLocations[:, 0] - 1000*params[1] #initialize second column of coordinates with x difference between GSs and source
+        coordinates[:, 2] = xyLocations[:, 1] - 1000*params[2] #initialize second column of coordinates with y difference between GSs and source
         coordinates[:, 3] = np.full((len(xyLocations)), 10**params[3]) #initialize second column of coordinates with x difference between GS and source
         Rvect = LA.norm(coordinates[:, 1:4], axis = 1).T #calculate R vector from source to GS
         magVect = coordinates[:, 0] * (1 - self.poisson) / math.pi /(np.power(Rvect, 3)) #calculate magnitude which will later be multiplied by x, y, and d

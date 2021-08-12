@@ -98,7 +98,7 @@ class LSOptimization:
         # self.testingMatrix = self.ms.testingX
 
         bounds = ((4.4, 8.4), (3, 7), (7, 13), (0.5, 3.5))
-        numPoints = 100
+        numPoints = 80
         numGS = 20
         # strengthUniform = np.random.uniform(bounds[0][0], bounds[0][1], size=(numPoints, 1))
         # xUniform = np.random.uniform(bounds[1][0], bounds[1][1], size=(numPoints, 1))
@@ -157,7 +157,7 @@ class LSOptimization:
         con = pltt.contourf(self.groundStations[:, 0].reshape(numGS, numGS), self.groundStations[:, 1].reshape(numGS, numGS), self.syntheticData.reshape(numGS, numGS),
                             150, vmin=0, vmax=1.2, cmap="magma")
         cbar = fig.colorbar(con, ax=pltt)
-        cbar.ax.set_ylabel('Vertical Displacement (km)', rotation=90)
+        cbar.ax.set_ylabel('Vertical Displacement (m)', rotation=90)
         cbar.ax.get_yaxis().labelpad = 10
         pltt.set_title("Mogi Model")
         pltt.set_xlabel("X (km)")
@@ -171,7 +171,7 @@ class LSOptimization:
         #                     self.groundStations[:, 1].reshape(numGS, numGS), bestData, 10,
         #              cmap="magma", vmin=-5, vmax=15, extend='both')
         cbar = fig.colorbar(con, ax=pltt)
-        cbar.ax.set_ylabel('Vertical Displacement (km)', rotation=90)
+        cbar.ax.set_ylabel('Vertical Displacement (m)', rotation=90)
         cbar.ax.get_yaxis().labelpad = 10
         pltt.set_title("Surrogate Model")
         pltt.set_xlabel("X (km)")
@@ -191,7 +191,7 @@ class LSOptimization:
         #              self.syntheticData.reshape(numGS, numGS) - bestData, 10,
         #              cmap="magma", vmin=-5, vmax=15)
         cbar = fig.colorbar(con, ax = axs)
-        cbar.ax.set_ylabel('Vertical Displacement (km)', rotation=90)
+        cbar.ax.set_ylabel('Vertical Displacement (m)', rotation=90)
         cbar.ax.get_yaxis().labelpad = 10
         plt.title("Difference Between Mogi and Surrogate Vertical Displacement Data")
         # axs.set_title("Difference Between Synthetic and Best Fit Model Vertical Displacement Data")
@@ -1625,8 +1625,8 @@ class LSOptimization:
 
 if __name__ == '__main__':
     ls = LSOptimization()
-    # ls.conductOptimization()
-    ls.InSARMogiInterpolation()
+    ls.conductOptimization()
+    # ls.InSARMogiInterpolation()
     # ls.conductOptimization2()
     # ls.testingMinimize()
     # ls.testGP()
